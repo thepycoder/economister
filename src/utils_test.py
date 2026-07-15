@@ -9,10 +9,9 @@ from models import Article
 from utils import (
     create_directories, sanitize_filename, save_debug_html,
     convert_symbols, parse_edition_date, extract_date_from_cover_url,
-    extract_date_from_text, is_valid_article_url, detect_section_from_url,
+    extract_date_from_text, is_valid_article_url,
     has_extractable_content,
     is_cartoon_url,
-    wtw_subsection_sort_key,
 )
 
 
@@ -211,8 +210,8 @@ class TestURLValidation(unittest.TestCase):
             "Business"
         ))
 
-    def test_wtw_subsection_sort_key(self):
-        """Test WTW subsection ordering."""
+    def test_cartoon_url_and_extractable_content(self):
+        """Test cartoon URL detection and extractable content checks."""
         self.assertTrue(
             is_cartoon_url(
                 "https://www.economist.com/the-world-this-week/"
@@ -230,22 +229,6 @@ class TestURLValidation(unittest.TestCase):
         self.assertTrue(has_extractable_content(article))
         empty = Article(url="https://example.com/empty")
         self.assertFalse(has_extractable_content(empty))
-        self.assertLess(
-            wtw_subsection_sort_key(
-                "https://www.economist.com/the-world-this-week/2026/07/09/politics"
-            ),
-            wtw_subsection_sort_key(
-                "https://www.economist.com/the-world-this-week/2026/07/09/business"
-            ),
-        )
-        self.assertLess(
-            wtw_subsection_sort_key(
-                "https://www.economist.com/the-world-this-week/2026/07/09/business"
-            ),
-            wtw_subsection_sort_key(
-                "https://www.economist.com/the-world-this-week/2026/07/09/cartoon-x"
-            ),
-        )
 
         # Invalid - malicious URLs
         self.assertFalse(is_valid_article_url(
@@ -256,28 +239,6 @@ class TestURLValidation(unittest.TestCase):
         # Invalid - None or empty
         self.assertFalse(is_valid_article_url(None, "Test"))
         self.assertFalse(is_valid_article_url("", "Test"))
-
-    def test_detect_section_from_url(self):
-        """Test section detection from URL."""
-        # Known sections
-        self.assertEqual(
-            detect_section_from_url("/2024/12/15/leaders/test"),
-            "Leaders"
-        )
-        self.assertEqual(
-            detect_section_from_url("/2024/12/15/science-and-technology/test"),
-            "Science & technology"
-        )
-        self.assertEqual(
-            detect_section_from_url("/2024/12/15/business/test"),
-            "Business"
-        )
-
-        # Unknown section
-        self.assertEqual(
-            detect_section_from_url("/2024/12/15/unknown/test"),
-            "Other"
-        )
 
 
 if __name__ == '__main__':

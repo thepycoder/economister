@@ -11,6 +11,7 @@ from test_fixtures import (
     MOCK_WEEKLY_EDITION_HTML,
     MOCK_WEEKLY_EDITION_WTW_HTML,
 )
+from utils import EditionParseError
 
 
 class TestContentExtractor(unittest.TestCase):
@@ -138,57 +139,90 @@ class TestContentExtractor(unittest.TestCase):
         cover_url = self.extractor.extract_cover_url("<html><body>No images</body></html>")
         self.assertIsNone(cover_url)
 
-    def test_extract_article_links(self):
-        """Test extracting article links from weekly edition."""
-        links = self.extractor.extract_article_links(MOCK_WEEKLY_EDITION_HTML)
+    def test_extract_edition_articles(self):
+        """Test extracting articles from weekly edition in DOM order."""
+        links = self.extractor.extract_edition_articles(MOCK_WEEKLY_EDITION_HTML)
 
-        # Should find all article links
         self.assertGreater(len(links), 0)
 
-        # Check structure
         for link in links:
             self.assertIn('title', link)
             self.assertIn('url', link)
             self.assertIn('section', link)
-
-            # URL should be absolute
             self.assertTrue(link['url'].startswith('https://'))
-
-            # Should have detected section
             self.assertIsNotNone(link['section'])
 
-        # Check specific articles
         titles = [link['title'] for link in links]
         self.assertIn("Stay Hungry, Stay Foolish: The Stanford Legacy", titles)
         self.assertIn("The magic of 0x5f3759df: A computational miracle", titles)
 
-    def test_extract_world_this_week_links(self):
-        """WTW links with short anchor text are discovered."""
-        links = self.extractor.extract_world_this_week_links(
+        sections = [link['section'] for link in links]
+        self.assertIn('1843', sections)
+        self.assertEqual(
+            sections[sections.index('1843')],
+            '1843',
+        )
+        self.assertEqual(
+            links[sections.index('1843')]['title'],
+            '1843 | Sample long read',
+        )
+
+        leaders_idx = sections.index('Leaders')
+        section_1843_idx = sections.index('1843')
+        business_idx = sections.index('Business')
+        self.assertLess(leaders_idx, section_1843_idx)
+        self.assertLess(section_1843_idx, business_idx)
+
+    def test_extract_edition_articles_wtw_order(self):
+        """WTW links with short anchor text are discovered in DOM order."""
+        links = self.extractor.extract_edition_articles(
             MOCK_WEEKLY_EDITION_WTW_HTML
         )
-        self.assertEqual(len(links), 3)
+        self.assertEqual(len(links), 4)
         slugs = [link['url'].rstrip('/').split('/')[-1] for link in links]
-        self.assertEqual(slugs, ['politics', 'business', 'cartoon-test-slug'])
-
-    def test_merge_article_links_prefers_extra(self):
-        """Merged WTW entries override generic scraper titles."""
-        primary = [{
-            'title': 'Cartoon: Test headline',
-            'url': 'https://www.economist.com/the-world-this-week/2026/07/09/cartoon-test-slug',
-            'section': 'The world this week',
-        }]
-        extra = [{
-            'title': 'Politics',
-            'url': 'https://www.economist.com/the-world-this-week/2026/07/09/politics',
-            'section': 'The world this week',
-        }]
-        merged = self.extractor.merge_article_links(primary, extra)
-        urls = {item['url']: item['title'] for item in merged}
         self.assertEqual(
-            urls['https://www.economist.com/the-world-this-week/2026/07/09/politics'],
-            'Politics',
+            slugs,
+            ['politics', 'business', 'cartoon-test-slug', 'sample-photo-essay'],
         )
+        self.assertTrue(all(
+            link['section'] == 'The world this week' for link in links[:3]
+        ))
+
+    def test_extract_edition_articles_no_main(self):
+        """Missing <main> raises EditionParseError."""
+        with self.assertRaises(EditionParseError) as ctx:
+            self.extractor.extract_edition_articles('<html><body></body></html>')
+        self.assertEqual(ctx.exception.reason, 'no_main_element')
+
+    def test_extract_edition_articles_no_sections(self):
+        """Main without section headings raises EditionParseError."""
+        html = '<html><body><main id="content"><h2>Contents</h2></main></body></html>'
+        with self.assertRaises(EditionParseError) as ctx:
+            self.extractor.extract_edition_articles(html)
+        self.assertEqual(ctx.exception.reason, 'no_section_headings')
+
+    def test_extract_edition_articles_no_articles(self):
+        """Sections without article links raises EditionParseError."""
+        html = (
+            '<html><body><main id="content">'
+            '<h2>Leaders</h2><p>No links here</p>'
+            '</main></body></html>'
+        )
+        with self.assertRaises(EditionParseError) as ctx:
+            self.extractor.extract_edition_articles(html)
+        self.assertEqual(ctx.exception.reason, 'no_articles_found')
+
+    def test_extract_edition_articles_before_section(self):
+        """Article link before first section raises EditionParseError."""
+        html = (
+            '<html><body><main id="content">'
+            '<a href="/leaders/2026/07/09/test-article-slug">Orphan article link</a>'
+            '<h2>Leaders</h2>'
+            '</main></body></html>'
+        )
+        with self.assertRaises(EditionParseError) as ctx:
+            self.extractor.extract_edition_articles(html)
+        self.assertEqual(ctx.exception.reason, 'article_without_section')
 
     def test_extract_interactive_photo_essay(self):
         """Interactive bespoke layout uses body-text elements."""

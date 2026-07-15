@@ -12,7 +12,10 @@ from config import (
     SKIP_PHRASES
 )
 from models import Article
-from utils import convert_symbols
+from utils import (
+    EditionParseError, SKIP_SECTION_HEADINGS, convert_symbols,
+    is_valid_article_url,
+)
 
 
 class ContentExtractor:
@@ -96,83 +99,91 @@ class ContentExtractor:
 
         return None
 
-    def extract_article_links(self, html: str) -> List[dict]:
-        """Extract article links from weekly edition page.
+    ECONOMIST_BASE_URL = 'https://www.economist.com'
+
+    def extract_edition_articles(self, html: str) -> List[dict]:
+        """Extract article links from weekly edition page in DOM order.
+
+        Walks <main> in document order: h2 headings set the section, h3>a and
+        standalone article links are collected under the current section.
 
         Args:
-            html: Page HTML.
+            html: Weekly edition page HTML.
 
         Returns:
-            List of article info dictionaries.
+            List of article dicts with title, url, and section in page order.
+
+        Raises:
+            EditionParseError: When the page structure cannot be parsed.
         """
-        from utils import is_valid_article_url, detect_section_from_url
-
         soup = BeautifulSoup(html, 'html.parser')
-        articles = []
-        seen_urls = set()
+        main = soup.find('main', id='content') or soup.find('main')
+        if main is None:
+            raise EditionParseError(
+                'no_main_element',
+                'Weekly edition page has no <main> element.',
+            )
 
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            text = link.get_text(' ', strip=True)
+        current_section: Optional[str] = None
+        section_headings: List[str] = []
+        articles: List[dict] = []
+        seen_urls: set[str] = set()
 
+        for element in main.find_all(['h2', 'h3', 'a']):
+            if element.name == 'h2':
+                heading = element.get_text(' ', strip=True)
+                if not heading or heading in SKIP_SECTION_HEADINGS:
+                    continue
+                current_section = heading
+                section_headings.append(heading)
+                continue
+
+            anchor = None
+            if element.name == 'h3':
+                anchor = element.find('a', href=True)
+            elif element.name == 'a' and element.find_parent('h3') is None:
+                anchor = element if element.get('href') else None
+
+            if anchor is None:
+                continue
+
+            href = anchor.get('href', '')
+            text = anchor.get_text(' ', strip=True)
             if not is_valid_article_url(href, text):
                 continue
 
-            if not href.startswith('http'):
-                href = urljoin('https://www.economist.com', href)
-
-            if href not in seen_urls:
-                seen_urls.add(href)
-                articles.append({
-                    'title': text,
-                    'url': href,
-                    'section': detect_section_from_url(href)
-                })
-
-        return articles
-
-    def extract_world_this_week_links(self, html: str) -> List[dict]:
-        """Extract WTW article links from the weekly edition page.
-
-        Uses URL pattern matching so short anchor text ("Politics") is kept.
-        """
-        from utils import detect_section_from_url, is_world_this_week_url
-
-        soup = BeautifulSoup(html, 'html.parser')
-        links = []
-        seen: set[str] = set()
-
-        for anchor in soup.find_all('a', href=True):
-            href = anchor.get('href', '')
-            if not is_world_this_week_url(href):
-                continue
-            if not re.search(r'/202[4-9]/\d{2}/\d{2}/', href):
-                continue
+            if current_section is None:
+                raise EditionParseError(
+                    'article_without_section',
+                    f'Article link before first section heading: {href}',
+                )
 
             if not href.startswith('http'):
-                href = urljoin('https://www.economist.com', href)
+                href = urljoin(self.ECONOMIST_BASE_URL, href)
 
-            if href in seen:
+            if href in seen_urls:
                 continue
-            seen.add(href)
+            seen_urls.add(href)
 
-            text = anchor.get_text(' ', strip=True) or href.rstrip('/').split('/')[-1]
-            links.append({
+            articles.append({
                 'title': text,
                 'url': href,
-                'section': detect_section_from_url(href),
+                'section': current_section,
             })
 
-        return links
+        if not section_headings:
+            raise EditionParseError(
+                'no_section_headings',
+                'No section headings found in weekly edition <main>.',
+            )
 
-    def merge_article_links(
-        self, primary: List[dict], extra: List[dict]
-    ) -> List[dict]:
-        """Merge link lists, preferring entries from *extra* on URL collision."""
-        by_url = {item['url']: item for item in primary}
-        for item in extra:
-            by_url[item['url']] = item
-        return list(by_url.values())
+        if not articles:
+            raise EditionParseError(
+                'no_articles_found',
+                f'Found {len(section_headings)} sections but no article links.',
+            )
+
+        return articles
 
     def _extract_subtitle(self, soup: BeautifulSoup) -> Optional[str]:
         """Extract article subtitle/tagline from soup."""

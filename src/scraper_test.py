@@ -316,7 +316,7 @@ class TestEconomistScraper(unittest.TestCase):
     def test_wtw_articles_included(
         self, mock_browser_class, mock_save_debug
     ):
-        """Test WTW articles are extracted and sorted."""
+        """Test WTW articles are extracted in DOM order."""
         mock_session = Mock()
         mock_session.get.return_value = self._mock_response(
             MOCK_WEEKLY_EDITION_WTW_HTML
@@ -327,16 +327,19 @@ class TestEconomistScraper(unittest.TestCase):
         scraper.session = mock_session
         edition = scraper.scrape_weekly_edition()
 
+        self.assertEqual(len(edition.articles), 4)
+
         wtw_articles = [
             a for a in edition.articles
             if a.section == 'The world this week'
         ]
-        self.assertEqual(len(wtw_articles), 3)
+        self.assertEqual(len(wtw_articles), 4)
 
-        urls = [a.url for a in wtw_articles]
-        self.assertTrue(any('/politics' in u for u in urls))
-        self.assertTrue(any('/business' in u for u in urls))
-        self.assertTrue(any('/cartoon' in u for u in urls))
+        slugs = [a.url.rstrip('/').split('/')[-1] for a in edition.articles]
+        self.assertEqual(
+            slugs,
+            ['politics', 'business', 'cartoon-test-slug', 'sample-photo-essay'],
+        )
 
 
 if __name__ == "__main__":

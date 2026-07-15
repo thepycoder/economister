@@ -189,22 +189,22 @@ class TestEpubBuilder(unittest.TestCase):
         self.assertIsNone(cover_page)
 
     def test_build_table_of_contents(self):
-        """Test TOC generation."""
-        # Add chapters to sections
+        """Test TOC generation follows edition section order."""
         for article in self.articles:
             chapter = Mock()
             chapter.title = article.title
-            self.builder.sections.setdefault(article.section, []).append(chapter)
+            section = article.section
+            if section not in self.builder.sections:
+                self.builder.sections[section] = []
+                self.builder.section_order.append(section)
+            self.builder.sections[section].append(chapter)
 
         toc = self.builder._build_table_of_contents()
 
-        # Should have 2 sections (Leaders and Business are in SECTION_ORDER, Technology is not)
-        self.assertEqual(len(toc), 2)  # Two sections in order + Other
+        self.assertEqual(len(toc), 3)
 
-        # Check section names
         section_names = [entry[0].title for entry in toc]
-        self.assertIn("Leaders", section_names)
-        self.assertIn("Business", section_names)
+        self.assertEqual(section_names, ["Leaders", "Business", "Technology"])
 
     def test_add_stylesheet(self):
         """Test stylesheet addition."""

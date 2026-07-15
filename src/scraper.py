@@ -13,6 +13,7 @@ from config import (
 )
 from models import Article, Edition
 from utils import (
+    EditionParseError,
     extract_date_from_cover_url, extract_date_from_text,
     has_extractable_content, save_debug_html,
 )
@@ -137,13 +138,13 @@ class EconomistScraper:
             if self.debug:
                 print(f"Found cover: {cover_url}")
 
-        # Extract article links (WTW merged explicitly for short TOC labels)
-        article_links = self.extractor.extract_article_links(html)
-        wtw_links = self.extractor.extract_world_this_week_links(html)
-        article_links = self.extractor.merge_article_links(
-            article_links, wtw_links
-        )
-        article_links = self._sort_edition_articles(article_links)
+        try:
+            article_links = self.extractor.extract_edition_articles(html)
+        except EditionParseError as exc:
+            print(f"\nWeekly edition parse failed: {exc.reason}")
+            if exc.details:
+                print(f"  {exc.details}")
+            raise
 
         print(f"Found {len(article_links)} unique articles")
 
@@ -258,41 +259,18 @@ class EconomistScraper:
             self.edition.date = date
             print(f"Weekly edition date: {date}")
 
-    def _sort_edition_articles(self, article_links: List[dict]) -> List[dict]:
-        """Order articles by section, with WTW subsections Politics → Business → Cartoon."""
-        from config import SECTION_ORDER
-        from utils import wtw_subsection_sort_key
-
-        section_rank = {name: i for i, name in enumerate(SECTION_ORDER)}
-
-        def sort_key(link: dict) -> tuple:
-            section = link.get('section') or 'Other'
-            section_index = section_rank.get(section, len(SECTION_ORDER))
-            wtw_index = (
-                wtw_subsection_sort_key(link.get('url', ''))
-                if section == 'The world this week' else 0
-            )
-            return (section_index, wtw_index, link.get('title') or '')
-
-        return sorted(article_links, key=sort_key)
-
     def _print_section_counts(self) -> None:
-        """Print article counts by section."""
-        from config import SECTION_ORDER
+        """Print article counts by section in edition order."""
+        section_order: List[str] = []
+        counts: dict[str, int] = {}
 
-        sections = self.edition.articles_by_section()
+        for article in self.edition.articles:
+            section = article.section or 'Unknown'
+            if section not in counts:
+                section_order.append(section)
+                counts[section] = 0
+            counts[section] += 1
 
         print("\nArticles by section:")
-        for section in SECTION_ORDER:
-            if section in sections:
-                print(f"  {section}: {len(sections[section])}")
-
-        if 'Other' in sections:
-            print(f"  Other: {len(sections['Other'])}")
-            if self.debug:
-                print("\n  Uncategorized articles:")
-                for article in sections['Other']:
-                    if article.url:
-                        url_part = article.url.split('/')[-3]
-                        title = (article.title or "")[:50]
-                        print(f"    - {title}... [{url_part}]")
+        for section in section_order:
+            print(f"  {section}: {counts[section]}")

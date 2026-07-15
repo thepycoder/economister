@@ -7,6 +7,18 @@ from typing import Optional
 
 from config import MONTH_NAMES, MONTH_NUMBERS
 
+SKIP_SECTION_HEADINGS = frozenset({'Contents'})
+
+
+class EditionParseError(Exception):
+    """Raised when weekly edition HTML cannot be parsed."""
+
+    def __init__(self, reason: str, details: str = '') -> None:
+        self.reason = reason
+        self.details = details
+        message = reason if not details else f'{reason}: {details}'
+        super().__init__(message)
+
 
 def create_directories(debug: bool = False) -> None:
     """Create necessary output directories.
@@ -164,20 +176,6 @@ def has_extractable_content(article) -> bool:
     return article.paragraph_count > 0 or article.image_count > 0
 
 
-def wtw_subsection_sort_key(url: str) -> int:
-    """Sort key for WTW articles: Politics → Business → Cartoon."""
-    if not url:
-        return 99
-    slug = url.rstrip('/').split('/')[-1].lower()
-    if slug == 'politics':
-        return 0
-    if slug == 'business':
-        return 1
-    if slug.startswith('cartoon'):
-        return 2
-    return 50
-
-
 def is_valid_article_url(href: str, text: str) -> bool:
     """Check if URL is a valid article link.
 
@@ -213,42 +211,3 @@ def is_valid_article_url(href: str, text: str) -> bool:
     ]
 
     return not any(skip in href for skip in skip_patterns)
-
-
-def detect_section_from_url(url: str) -> str:
-    """Determine article section from URL pattern.
-
-    Args:
-        url: Article URL.
-
-    Returns:
-        Section name string.
-    """
-    url_patterns = {
-        '/the-world-this-week/': 'The world this week',
-        '/leaders/': 'Leaders',
-        '/letters/': 'Letters',
-        '/by-invitation/': 'By Invitation',
-        '/briefing/': 'Briefing',
-        '/united-states/': 'United States',
-        '/the-americas/': 'The Americas',
-        '/asia/': 'Asia',
-        '/china/': 'China',
-        '/middle-east-and-africa/': 'Middle East & Africa',
-        '/europe/': 'Europe',
-        '/britain/': 'Britain',
-        '/international/': 'International',
-        '/business/': 'Business',
-        '/finance-and-economics/': 'Finance & economics',
-        '/science-and-technology/': 'Science & technology',
-        '/culture/': 'Culture',
-        '/economic-and-financial-indicators/':
-            'Economic & financial indicators',
-        '/obituary/': 'Obituary'
-    }
-
-    for pattern, section in url_patterns.items():
-        if pattern in url:
-            return section
-
-    return 'Other'

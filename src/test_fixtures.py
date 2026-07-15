@@ -8,29 +8,29 @@ MOCK_WEEKLY_EDITION_HTML = """
 <body>
     <img src="https://example.com/content/2024/12/20241215_DE_US.jpg" alt="Cover">
 
-    <div class="section">
+    <main id="content">
+        <h2>Contents</h2>
+
         <h2>This week in tech</h2>
-        <a href="/2024/12/15/stay-hungry-stay-foolish">Stay Hungry, Stay Foolish: The Stanford Legacy</a>
-        <a href="/2024/12/15/connecting-dots-backwards">Why you can only connect the dots looking backwards</a>
-    </div>
+        <h3><a href="/the-world-this-week/2026/07/09/politics">Politics</a></h3>
+        <h3><a href="/the-world-this-week/2026/07/09/business">Business</a></h3>
 
-    <div class="section">
         <h2>Leaders</h2>
-        <a href="/2024/12/15/fast-inverse-square-root">The magic of 0x5f3759df: A computational miracle</a>
-        <a href="/2024/12/15/moores-law-ending">Moore's Law isn't dead, it's just resting</a>
-    </div>
+        <h3><a href="/2024/12/15/stay-hungry-stay-foolish">Stay Hungry, Stay Foolish: The Stanford Legacy</a></h3>
+        <h3><a href="/2024/12/15/fast-inverse-square-root">The magic of 0x5f3759df: A computational miracle</a></h3>
+        <h3><a href="/2024/12/15/moores-law-ending">Moore's Law isn't dead, it's just resting</a></h3>
 
-    <div class="section">
-        <h2>Science & technology</h2>
-        <a href="/2024/12/15/quantum-supremacy-debate">The quantum supremacy debate heats up</a>
-        <a href="/2024/12/15/ai-consciousness">Can machines think? The new Turing test</a>
-    </div>
+        <h2>1843</h2>
+        <h3><a href="/1843/2026/07/09/sample-long-read">1843 | Sample long read</a></h3>
 
-    <div class="section">
+        <h2>Science &amp; technology</h2>
+        <h3><a href="/2024/12/15/quantum-supremacy-debate">The quantum supremacy debate heats up</a></h3>
+        <h3><a href="/2024/12/15/ai-consciousness">Can machines think? The new Turing test</a></h3>
+
         <h2>Business</h2>
-        <a href="/2024/12/15/unicorn-bubble">The one-person unicorn phenomenon</a>
-        <a href="/2024/12/15/crypto-winter-thaw">Digital gold rush 2.0</a>
-    </div>
+        <h3><a href="/2024/12/15/unicorn-bubble">The one-person unicorn phenomenon</a></h3>
+        <h3><a href="/2024/12/15/crypto-winter-thaw">Digital gold rush 2.0</a></h3>
+    </main>
 </body>
 </html>
 """
@@ -40,11 +40,14 @@ MOCK_WEEKLY_EDITION_WTW_HTML = """
 <!DOCTYPE html>
 <html>
 <body>
-    <h2>The world this week</h2>
-    <h3><a href="/the-world-this-week/2026/07/09/politics">Politics</a></h3>
-    <h3><a href="/the-world-this-week/2026/07/09/business">Business</a></h3>
-    <h3><a href="/the-world-this-week/2026/07/09/cartoon-test-slug">Cartoon: Test headline</a></h3>
-    <a href="/interactive/middle-east-and-africa/2026/07/08/sample-photo-essay">Is this a photo essay with a long enough title</a>
+    <main id="content">
+        <h2>Contents</h2>
+        <h2>The world this week</h2>
+        <h3><a href="/the-world-this-week/2026/07/09/politics">Politics</a></h3>
+        <h3><a href="/the-world-this-week/2026/07/09/business">Business</a></h3>
+        <h3><a href="/the-world-this-week/2026/07/09/cartoon-test-slug">Cartoon: Test headline</a></h3>
+        <a href="/interactive/middle-east-and-africa/2026/07/08/sample-photo-essay">Is this a photo essay with a long enough title</a>
+    </main>
 </body>
 </html>
 """

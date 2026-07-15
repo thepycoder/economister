@@ -20,7 +20,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from config import (
   ECONOMIST_EMAIL,
   ECONOMIST_PASSWORD,
-  ECONOMIST_URL,
   LOGIN_URL,
   PAGE_LOAD_WAIT_TIME,
   USER_AGENT,
@@ -101,6 +100,16 @@ def _safe_current_url(driver: WebDriver) -> str:
     return ""
 
 
+def _safe_navigate(driver: WebDriver, url: str) -> bool:
+  """Navigate to URL; return False if the tab or session died."""
+  try:
+    driver.get(url)
+    _ = driver.current_url
+    return True
+  except WebDriverException:
+    return False
+
+
 def _wait_for_page_ready(driver: WebDriver, timeout: int = 30) -> bool:
   """Wait until document.readyState is complete."""
   try:
@@ -145,6 +154,8 @@ def _wait_for_login_complete(driver: WebDriver, timeout: int = 60) -> bool:
     if _is_still_authenticating(url):
       return False
     return "economist.com" in url
+  except WebDriverException:
+    return False
 
 
 def _find_element(
@@ -302,6 +313,11 @@ def dismiss_cookie_banner(
   Returns:
       True if a banner was dismissed.
   """
+  current = _safe_current_url(driver).lower()
+  if "myaccount.economist.com" in current:
+    # Economist consent UI lives on www.economist.com, not Salesforce login.
+    return False
+
   deadline = time.time() + timeout
   while time.time() < deadline:
     try:
@@ -333,7 +349,7 @@ def _wait_for_login_page(driver: WebDriver, timeout: int = 30) -> bool:
 
 
 def _verify_logged_in(driver: WebDriver) -> bool:
-  """Confirm the browser has an authenticated Economist session."""
+  """Confirm the browser finished OAuth and left the login flow."""
   if not _wait_for_login_complete(driver):
     return False
 
@@ -341,21 +357,13 @@ def _verify_logged_in(driver: WebDriver) -> bool:
   dismiss_cookie_banner(driver, timeout=10)
 
   current = _safe_current_url(driver).lower()
-  if "weeklyedition" not in current:
-    print("Opening weekly edition...")
-    try:
-      driver.get(ECONOMIST_URL)
-      _wait_for_page_ready(driver)
-      time.sleep(1)
-      dismiss_cookie_banner(driver, timeout=10)
-    except WebDriverException as exc:
-      print(f"Could not open weekly edition: {exc}")
-      return False
-
-  current = _safe_current_url(driver).lower()
-  if "login" in current or "myaccount.economist.com" in current:
+  if _is_still_authenticating(current):
     return False
-  return True
+  if "myaccount.economist.com" in current:
+    return False
+  if "/api/auth/login" in current:
+    return False
+  return "economist.com" in current
 
 
 def login_automated(
@@ -372,7 +380,8 @@ def login_automated(
       True if login succeeded and session was verified.
   """
   print("Navigating to login page...")
-  driver.get(LOGIN_URL)
+  if not _safe_navigate(driver, LOGIN_URL):
+    return False
   dismiss_cookie_banner(driver, timeout=2)
 
   print("Waiting for login form...")
@@ -427,16 +436,9 @@ class BrowserManager:
       options = webdriver.ChromeOptions()
       options.add_argument("--disable-blink-features=AutomationControlled")
       options.add_experimental_option("excludeSwitches", ["enable-logging"])
-      options.add_argument("--disable-gpu")
-      options.add_argument("--no-sandbox")
-      options.add_argument("--disable-dev-shm-usage")
-      options.page_load_strategy = "eager"
       options.add_experimental_option(
         "prefs",
-        {
-          "profile.managed_default_content_settings.images": 2,
-          "profile.default_content_setting_values.notifications": 2,
-        },
+        {"profile.default_content_setting_values.notifications": 2},
       )
       self.driver = webdriver.Chrome(options=options)
     except Exception as e:
@@ -510,7 +512,8 @@ class BrowserManager:
   def _login_manual(self) -> None:
     """Navigate to login page and wait for manual authentication."""
     print("Navigating to login page...")
-    self.driver.get(LOGIN_URL)
+    if not _safe_navigate(self.driver, LOGIN_URL):
+      raise RuntimeError("Browser tab crashed while opening login page")
     dismiss_cookie_banner(self.driver, timeout=3)
     print("\n" + "=" * 60)
     print("Please log in to The Economist in the browser")

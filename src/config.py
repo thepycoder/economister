@@ -21,32 +21,6 @@ ECONOMIST_URL = (
 )
 LOGIN_URL = "https://www.economist.com/api/auth/login"
 
-# The Economist sections in standard order
-SECTION_ORDER: List[str] = [
-  "The world this week",
-  "Leaders",
-  "Letters",
-  "By Invitation",
-  "Briefing",
-  "United States",
-  "The Americas",
-  "Asia",
-  "China",
-  "Middle East & Africa",
-  "Europe",
-  "Britain",
-  "International",
-  "Business",
-  "Finance & economics",
-  "Science & technology",
-  "Culture",
-  "Economic & financial indicators",
-  "Obituary",
-]
-
-# Subsection order within "The world this week"
-WTW_SUBSECTION_ORDER = ["politics", "business", "cartoon"]
-
 # Content filtering patterns
 SKIP_PHRASES: List[str] = [
   "sign up",

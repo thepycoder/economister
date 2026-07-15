@@ -8,7 +8,6 @@ from ebooklib import epub
 
 from config import (
     COVER_PAGE_HTML, EPUB_STYLESHEET, MAX_IMAGES_PER_ARTICLE,
-    SECTION_ORDER
 )
 from models import Article, Edition
 from utils import parse_edition_date
@@ -28,6 +27,7 @@ class EpubBuilder:
         self.book = epub.EpubBook()
         self.chapters = []
         self.sections = {}
+        self.section_order: List[str] = []
         self.image_handler = ImageHandler(debug=debug)
         self.full_res_cover_data = None
 
@@ -55,10 +55,10 @@ class EpubBuilder:
                 self.book.add_item(chapter)
                 self.chapters.append(chapter)
 
-                # Organize by section
-                section = article.section or 'Other'
+                section = article.section or 'Unknown'
                 if section not in self.sections:
                     self.sections[section] = []
+                    self.section_order.append(section)
                 self.sections[section].append(chapter)
 
         # Create cover page
@@ -313,38 +313,15 @@ class EpubBuilder:
         """
         toc = []
 
-        for section in SECTION_ORDER:
-            if section in self.sections and self.sections[section]:
-                section_chapters = self._sort_section_chapters(
-                    section, self.sections[section]
-                )
+        for section in self.section_order:
+            chapters = self.sections.get(section)
+            if chapters:
                 toc.append((
                     epub.Section(section),
-                    tuple(section_chapters)
+                    tuple(chapters)
                 ))
 
-        if 'Other' in self.sections and self.sections['Other']:
-            toc.append((
-                epub.Section('Other'),
-                tuple(self.sections['Other'])
-            ))
-
         return toc
-
-    def _sort_section_chapters(
-        self, section: str, chapters: List
-    ) -> List:
-        """Sort chapters within a section (WTW: Politics → Business → Cartoon)."""
-        if section != 'The world this week':
-            return chapters
-
-        from utils import wtw_subsection_sort_key
-
-        def chapter_key(chapter) -> tuple:
-            url = getattr(chapter, 'article_url', '') or ''
-            return (wtw_subsection_sort_key(url), chapter.title or '')
-
-        return sorted(chapters, key=chapter_key)
 
     def _add_stylesheet(self) -> None:
         """Add CSS stylesheet to the EPUB."""

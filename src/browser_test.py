@@ -11,6 +11,7 @@ from browser import (
   login_automated,
   _dismiss_sourcepoint_consent,
   _is_still_authenticating,
+  _verify_logged_in,
 )
 
 
@@ -76,6 +77,28 @@ class TestBrowserHelpers(unittest.TestCase):
     driver.switch_to.frame.assert_called_once_with(iframe)
     mock_click.assert_called_once_with(driver, button)
     driver.switch_to.default_content.assert_called_once()
+
+  def test_verify_logged_in_accepts_post_oauth_homepage(self):
+    """Login verification does not require loading the weekly edition."""
+    driver = Mock()
+    driver.current_url = "https://www.economist.com/"
+
+    with patch("browser._wait_for_login_complete", return_value=True), patch(
+      "browser.dismiss_cookie_banner", return_value=False
+    ):
+      self.assertTrue(_verify_logged_in(driver))
+
+    driver.get.assert_not_called()
+
+  def test_verify_logged_in_rejects_salesforce_login_page(self):
+    """Login verification fails while still on Salesforce."""
+    driver = Mock()
+    driver.current_url = "https://myaccount.economist.com/s/login/"
+
+    with patch("browser._wait_for_login_complete", return_value=True), patch(
+      "browser.dismiss_cookie_banner", return_value=False
+    ):
+      self.assertFalse(_verify_logged_in(driver))
 
   @patch("browser._verify_logged_in", return_value=True)
   @patch("browser._click_first", return_value=True)
