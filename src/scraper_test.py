@@ -5,8 +5,9 @@ from unittest.mock import Mock, patch, MagicMock
 from scraper import EconomistScraper
 from models import Article, Edition
 from test_fixtures import (
+    MOCK_ARTICLE_JOBS_HTML,
     MOCK_WEEKLY_EDITION_HTML,
-    MOCK_ARTICLE_JOBS_HTML
+    MOCK_WEEKLY_EDITION_WTW_HTML,
 )
 
 
@@ -221,6 +222,47 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertTrue(any("Leaders: 2" in str(call) for call in print_calls))
         self.assertTrue(any("Business: 1" in str(call) for call in print_calls))
         self.assertTrue(any("Other: 1" in str(call) for call in print_calls))
+
+    def test_sort_edition_articles_wtw_order(self):
+        """WTW articles sort Politics before Business before Cartoon."""
+        links = [
+            {
+                'title': 'Cartoon',
+                'url': 'https://www.economist.com/the-world-this-week/2026/07/09/cartoon-x',
+                'section': 'The world this week',
+            },
+            {
+                'title': 'Business',
+                'url': 'https://www.economist.com/the-world-this-week/2026/07/09/business',
+                'section': 'The world this week',
+            },
+            {
+                'title': 'Politics',
+                'url': 'https://www.economist.com/the-world-this-week/2026/07/09/politics',
+                'section': 'The world this week',
+            },
+        ]
+        sorted_links = self.scraper._sort_edition_articles(links)
+        titles = [link['title'] for link in sorted_links]
+        self.assertEqual(titles, ['Politics', 'Business', 'Cartoon'])
+
+    @patch('scraper.save_debug_html')
+    @patch('scraper.BrowserManager')
+    def test_scrape_weekly_edition_includes_wtw(
+        self, mock_browser_class, mock_save_debug
+    ):
+        """Weekly edition scrape discovers short-label WTW links."""
+        mock_browser = Mock()
+        mock_browser.navigate.return_value = MOCK_WEEKLY_EDITION_WTW_HTML
+        mock_browser_class.return_value = mock_browser
+
+        scraper = EconomistScraper()
+        edition = scraper.scrape_weekly_edition()
+
+        wtw = [a for a in edition.articles if a.section == 'The world this week']
+        self.assertEqual(len(wtw), 3)
+        self.assertEqual(wtw[0].title, 'Politics')
+        self.assertEqual(wtw[1].title, 'Business')
 
 
 if __name__ == '__main__':

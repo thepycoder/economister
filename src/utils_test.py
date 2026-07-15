@@ -8,7 +8,8 @@ import shutil
 from utils import (
     create_directories, sanitize_filename, save_debug_html,
     convert_symbols, parse_edition_date, extract_date_from_cover_url,
-    extract_date_from_text, is_valid_article_url, detect_section_from_url
+    extract_date_from_text, is_valid_article_url, detect_section_from_url,
+    wtw_subsection_sort_key,
 )
 
 
@@ -190,6 +191,41 @@ class TestURLValidation(unittest.TestCase):
             "/2024/12/15/podcasts/test",
             "Test Podcast Episode"
         ))
+
+        # Interactive path — regular articles (photo essays), not skipped
+        self.assertTrue(is_valid_article_url(
+            "/interactive/middle-east-and-africa/2026/07/08/is-donald-trump-serious",
+            "Is Donald Trump serious in declaring the ceasefire with Iran over?"
+        ))
+
+        # WTW short TOC labels
+        self.assertTrue(is_valid_article_url(
+            "/the-world-this-week/2026/07/09/politics",
+            "Politics"
+        ))
+        self.assertTrue(is_valid_article_url(
+            "/the-world-this-week/2026/07/09/business",
+            "Business"
+        ))
+
+    def test_wtw_subsection_sort_key(self):
+        """Test WTW subsection ordering."""
+        self.assertLess(
+            wtw_subsection_sort_key(
+                "https://www.economist.com/the-world-this-week/2026/07/09/politics"
+            ),
+            wtw_subsection_sort_key(
+                "https://www.economist.com/the-world-this-week/2026/07/09/business"
+            ),
+        )
+        self.assertLess(
+            wtw_subsection_sort_key(
+                "https://www.economist.com/the-world-this-week/2026/07/09/business"
+            ),
+            wtw_subsection_sort_key(
+                "https://www.economist.com/the-world-this-week/2026/07/09/cartoon-x"
+            ),
+        )
 
         # Invalid - malicious URLs
         self.assertFalse(is_valid_article_url(

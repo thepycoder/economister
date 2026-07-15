@@ -35,6 +35,42 @@ MOCK_WEEKLY_EDITION_HTML = """
 </html>
 """
 
+# Weekly edition snippet with short WTW anchor text (live Economist pattern)
+MOCK_WEEKLY_EDITION_WTW_HTML = """
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>The world this week</h2>
+    <h3><a href="/the-world-this-week/2026/07/09/politics">Politics</a></h3>
+    <h3><a href="/the-world-this-week/2026/07/09/business">Business</a></h3>
+    <h3><a href="/the-world-this-week/2026/07/09/cartoon-test-slug">Cartoon: Test headline</a></h3>
+    <a href="/interactive/middle-east-and-africa/2026/07/08/sample-photo-essay">Is this a photo essay with a long enough title</a>
+</body>
+</html>
+"""
+
+# Bespoke /interactive photo essay body layout
+MOCK_ARTICLE_INTERACTIVE_HTML = """
+<!DOCTYPE html>
+<html>
+<body>
+    <main id="content">
+        <h1>Photo essay headline</h1>
+        <div class="article-text">
+            <body-text>It was less a traditional lament for a slain leader than a victory parade across the region.</body-text>
+        </div>
+        <figure>
+            <img src="/interactive/sample/processed-images/1424/sample.jpg"/>
+            <figcaption><body-text>Mourners gather in the capital.</body-text></figcaption>
+        </figure>
+        <div class="article-text">
+            <body-text>America carried out dozens of strikes overnight. Even so, diplomacy may still resume soon.</body-text>
+        </div>
+    </main>
+</body>
+</html>
+"""
+
 # Mock article HTML - Steve Jobs Stanford speech themed
 MOCK_ARTICLE_JOBS_HTML = """
 <!DOCTYPE html>

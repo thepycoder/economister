@@ -98,7 +98,7 @@ Targeting specific past editions is not supported by design.
         sys.exit(1)
     except ImportError as e:
         print(f"\n\nMissing dependency: {e}")
-        print("Please run: pip install -r requirements.txt")
+        print("Please run: uv sync")
         sys.exit(1)
     except Exception as e:
         print(f"\n\nUnexpected error: {e}")

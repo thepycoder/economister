@@ -3,11 +3,13 @@
 import unittest
 from content_extractor import ContentExtractor
 from test_fixtures import (
-    MOCK_ARTICLE_JOBS_HTML,
-    MOCK_ARTICLE_QUAKE_HTML,
-    MOCK_ARTICLE_LOREM_HTML,
     MOCK_ARTICLE_EDGE_CASES_HTML,
-    MOCK_WEEKLY_EDITION_HTML
+    MOCK_ARTICLE_INTERACTIVE_HTML,
+    MOCK_ARTICLE_JOBS_HTML,
+    MOCK_ARTICLE_LOREM_HTML,
+    MOCK_ARTICLE_QUAKE_HTML,
+    MOCK_WEEKLY_EDITION_HTML,
+    MOCK_WEEKLY_EDITION_WTW_HTML,
 )
 
 
@@ -159,6 +161,45 @@ class TestContentExtractor(unittest.TestCase):
         titles = [link['title'] for link in links]
         self.assertIn("Stay Hungry, Stay Foolish: The Stanford Legacy", titles)
         self.assertIn("The magic of 0x5f3759df: A computational miracle", titles)
+
+    def test_extract_world_this_week_links(self):
+        """WTW links with short anchor text are discovered."""
+        links = self.extractor.extract_world_this_week_links(
+            MOCK_WEEKLY_EDITION_WTW_HTML
+        )
+        self.assertEqual(len(links), 3)
+        slugs = [link['url'].rstrip('/').split('/')[-1] for link in links]
+        self.assertEqual(slugs, ['politics', 'business', 'cartoon-test-slug'])
+
+    def test_merge_article_links_prefers_extra(self):
+        """Merged WTW entries override generic scraper titles."""
+        primary = [{
+            'title': 'Cartoon: Test headline',
+            'url': 'https://www.economist.com/the-world-this-week/2026/07/09/cartoon-test-slug',
+            'section': 'The world this week',
+        }]
+        extra = [{
+            'title': 'Politics',
+            'url': 'https://www.economist.com/the-world-this-week/2026/07/09/politics',
+            'section': 'The world this week',
+        }]
+        merged = self.extractor.merge_article_links(primary, extra)
+        urls = {item['url']: item['title'] for item in merged}
+        self.assertEqual(
+            urls['https://www.economist.com/the-world-this-week/2026/07/09/politics'],
+            'Politics',
+        )
+
+    def test_extract_interactive_photo_essay(self):
+        """Interactive bespoke layout uses body-text elements."""
+        url = (
+            "https://www.economist.com/interactive/middle-east-and-africa/"
+            "2026/07/08/sample-photo-essay"
+        )
+        article = self.extractor.extract_article(MOCK_ARTICLE_INTERACTIVE_HTML, url)
+        self.assertEqual(article.title, "Photo essay headline")
+        self.assertGreaterEqual(article.paragraph_count, 2)
+        self.assertGreaterEqual(article.image_count, 1)
 
     def test_hero_image_extraction(self):
         """Test hero image extraction."""

@@ -62,11 +62,19 @@ class ContentExtractor:
         # Find and process article body
         article_body = self._find_article_body(soup)
 
-        for element in article_body.find_all(['p', 'figure']):
-            if element.name == 'p':
+        for element in article_body.find_all(['p', 'figure', 'body-text']):
+            if element.name == 'body-text':
+                if element.find_parent('figcaption'):
+                    continue
+                if not element.find_parent(
+                    'div', class_=re.compile(r'article-text')
+                ):
+                    continue
+                self._process_body_text(element, article)
+            elif element.name == 'p':
                 self._process_paragraph(element, article)
             elif element.name == 'figure':
-                self._process_figure(element, article)
+                self._process_figure(element, article, url)
 
         return article
 
@@ -122,6 +130,49 @@ class ContentExtractor:
                 })
 
         return articles
+
+    def extract_world_this_week_links(self, html: str) -> List[dict]:
+        """Extract WTW article links from the weekly edition page.
+
+        Uses URL pattern matching so short anchor text ("Politics") is kept.
+        """
+        from utils import detect_section_from_url, is_world_this_week_url
+
+        soup = BeautifulSoup(html, 'html.parser')
+        links = []
+        seen: set[str] = set()
+
+        for anchor in soup.find_all('a', href=True):
+            href = anchor.get('href', '')
+            if not is_world_this_week_url(href):
+                continue
+            if not re.search(r'/202[4-9]/\d{2}/\d{2}/', href):
+                continue
+
+            if not href.startswith('http'):
+                href = urljoin('https://www.economist.com', href)
+
+            if href in seen:
+                continue
+            seen.add(href)
+
+            text = anchor.get_text(' ', strip=True) or href.rstrip('/').split('/')[-1]
+            links.append({
+                'title': text,
+                'url': href,
+                'section': detect_section_from_url(href),
+            })
+
+        return links
+
+    def merge_article_links(
+        self, primary: List[dict], extra: List[dict]
+    ) -> List[dict]:
+        """Merge link lists, preferring entries from *extra* on URL collision."""
+        by_url = {item['url']: item for item in primary}
+        for item in extra:
+            by_url[item['url']] = item
+        return list(by_url.values())
 
     def _extract_subtitle(self, soup: BeautifulSoup) -> Optional[str]:
         """Extract article subtitle/tagline from soup."""
@@ -191,6 +242,7 @@ class ContentExtractor:
             {'name': 'div', 'attrs': {'itemprop': 'articleBody'}},
             {'name': 'section',
              'attrs': {'class': re.compile('ei2yr3n0')}},
+            {'name': 'main', 'attrs': {'id': 'content'}},
             {'name': 'main', 'attrs': {'role': 'main'}}
         ]
 
@@ -284,13 +336,31 @@ class ContentExtractor:
 
         return inner_html
 
-    def _process_figure(self, element, article: Article) -> None:
+    def _process_body_text(self, element, article: Article) -> None:
+        """Process bespoke/interactive <body-text> prose blocks."""
+        plain_text = element.get_text(' ', strip=True)
+        plain_text = ' '.join(plain_text.split())
+
+        if len(plain_text) < MIN_PARAGRAPH_LENGTH:
+            return
+
+        if any(phrase in plain_text.lower() for phrase in SKIP_PHRASES):
+            return
+
+        inner_html = self._process_paragraph_html(element)
+        article.add_paragraph(inner_html)
+
+    def _process_figure(self, element, article: Article,
+                        page_url: Optional[str] = None) -> None:
         """Process and add figure element to article content."""
         img = element.find('img')
         if not img or not img.get('src'):
             return
 
         src = img.get('src')
+        if src and not src.startswith('http'):
+            base = page_url or 'https://www.economist.com'
+            src = urljoin(base, src)
 
         # Skip malicious URLs
         if any(pattern in src.lower() for pattern in

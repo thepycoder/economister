@@ -34,6 +34,9 @@ SECTION_ORDER: List[str] = [
   "Obituary",
 ]
 
+# Subsection order within "The world this week"
+WTW_SUBSECTION_ORDER = ["politics", "business", "cartoon"]
+
 # Content filtering patterns
 SKIP_PHRASES: List[str] = [
   "sign up",

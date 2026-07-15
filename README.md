@@ -27,8 +27,9 @@ Economister uses a simple yet effective approach: it opens a browser for you to 
 
 ## Prerequisites
 
-- **Python 3.7+**
-- **Google Chrome Browser** (must be installed - Selenium controls it but doesn't install it)
+- **Python 3.11–3.13** (3.14 is not supported yet — `lxml` / `ebooklib` need wheels)
+- **[uv](https://docs.astral.sh/uv/)** (recommended) or pip
+- **Google Chrome Browser** (must be installed — Selenium controls it but does not install it)
 - **Active Economist Subscription**
 
 ## Quick Start
@@ -38,8 +39,8 @@ Economister uses a simple yet effective approach: it opens a browser for you to 
 git clone https://github.com/yourusername/economister.git
 cd economister
 
-# 2. Install Python dependencies
-pip install -r requirements.txt
+# 2. Install dependencies (creates .venv with Python 3.13)
+uv sync
 
 # 3. Install ChromeDriver (required for Selenium)
 # macOS:
@@ -53,7 +54,7 @@ sudo apt-get install chromium-chromedriver
 # Add to PATH or place in project directory
 
 # 4. Run the tool
-python src/main.py  # Modular version
+uv run python src/main.py
 ```
 
 ## Project Structure
@@ -75,13 +76,19 @@ src/
 
 ```bash
 # Download current weekly edition (50+ articles)
-python src/main.py
+uv run python src/main.py
 
 # Quick test with 5 articles from current edition
-python src/main.py --limit 5
+uv run python src/main.py --limit 5
 
 # Debug mode (saves HTML files)
-python src/main.py --debug
+uv run python src/main.py --debug
+
+# Run tests
+uv run python src/test.py
+
+# Audit "The world this week" coverage
+uv run python scripts/audit_wtw.py --login --fetch-articles
 ```
 
 **Note**: All commands download from the current weekly edition only. There is no option to specify past editions.
@@ -142,7 +149,7 @@ This tool requires a valid Economist subscription. It only formats content you a
 
 ## Contributing
 
-See [LEARNINGS.md](LEARNINGS.md) for the complete development journey, including why we use manual login and how we solved various technical challenges.
+See [doc/learnings.md](doc/learnings.md) for the complete development journey, including why we use manual login and how we solved various technical challenges.
 
 **This tool is intentionally limited to downloading ONLY the current weekly edition.** The ability to target specific past editions or date ranges is not permitted and will not be implemented. This limitation ensures the tool:
 - Respects The Economist's content distribution model
@@ -151,7 +158,7 @@ See [LEARNINGS.md](LEARNINGS.md) for the complete development journey, including
 
 Other than that any contributions or modifications are allowed, so long as they adhere to:
 
-- **Testing**: Run `python src/test.py` before submitting PRs
+- **Testing**: Run `uv run python src/test.py` before submitting PRs
 - **Code Style**: Follow Google Python Style Guide
 - **Security**: Never commit credentials or bypass authentication
 

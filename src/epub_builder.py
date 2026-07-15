@@ -48,7 +48,7 @@ class EpubBuilder:
         # Create cover
         self._create_cover(edition.cover_url)
 
-        # Process articles
+        # Process articles (preserve edition order from scraper)
         for i, article in enumerate(articles, 1):
             chapter = self._create_chapter(article, i)
             if chapter:
@@ -164,6 +164,7 @@ class EpubBuilder:
 </body>
 </html>'''
 
+        chapter.article_url = article.url
         return chapter
 
     def _build_article_html(self, article: Article) -> Optional[str]:
@@ -314,7 +315,9 @@ class EpubBuilder:
 
         for section in SECTION_ORDER:
             if section in self.sections and self.sections[section]:
-                section_chapters = self.sections[section]
+                section_chapters = self._sort_section_chapters(
+                    section, self.sections[section]
+                )
                 toc.append((
                     epub.Section(section),
                     tuple(section_chapters)
@@ -327,6 +330,21 @@ class EpubBuilder:
             ))
 
         return toc
+
+    def _sort_section_chapters(
+        self, section: str, chapters: List
+    ) -> List:
+        """Sort chapters within a section (WTW: Politics → Business → Cartoon)."""
+        if section != 'The world this week':
+            return chapters
+
+        from utils import wtw_subsection_sort_key
+
+        def chapter_key(chapter) -> tuple:
+            url = getattr(chapter, 'article_url', '') or ''
+            return (wtw_subsection_sort_key(url), chapter.title or '')
+
+        return sorted(chapters, key=chapter_key)
 
     def _add_stylesheet(self) -> None:
         """Add CSS stylesheet to the EPUB."""

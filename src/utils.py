@@ -146,6 +146,25 @@ def extract_date_from_text(html: str) -> Optional[str]:
     return None
 
 
+def is_world_this_week_url(href: str) -> bool:
+    """Return True if URL is a weekly 'The world this week' article."""
+    return isinstance(href, str) and '/the-world-this-week/' in href
+
+
+def wtw_subsection_sort_key(url: str) -> int:
+    """Sort key for WTW articles: Politics → Business → Cartoon."""
+    if not url:
+        return 99
+    slug = url.rstrip('/').split('/')[-1].lower()
+    if slug == 'politics':
+        return 0
+    if slug == 'business':
+        return 1
+    if slug.startswith('cartoon'):
+        return 2
+    return 50
+
+
 def is_valid_article_url(href: str, text: str) -> bool:
     """Check if URL is a valid article link.
 
@@ -159,7 +178,11 @@ def is_valid_article_url(href: str, text: str) -> bool:
     if not href or not isinstance(href, str):
         return False
 
-    if not text or not isinstance(text, str) or len(text) <= 10:
+    if not text or not isinstance(text, str):
+        return False
+
+    # WTW TOC links use short labels ("Politics", "Business")
+    if not is_world_this_week_url(href) and len(text) <= 10:
         return False
 
     # Validate URL format
@@ -172,7 +195,7 @@ def is_valid_article_url(href: str, text: str) -> bool:
         return False
 
     skip_patterns = [
-        '/podcasts/', '/films/', '/interactive/',
+        '/podcasts/', '/films/',
         '/graphic-detail/', '/weeklyedition', '/newsletters'
     ]
 

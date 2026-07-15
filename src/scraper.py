@@ -53,8 +53,13 @@ class EconomistScraper:
             if self.debug:
                 print(f"Found cover: {cover_url}")
 
-        # Extract article links
+        # Extract article links (WTW merged explicitly for short TOC labels)
         article_links = self.extractor.extract_article_links(html)
+        wtw_links = self.extractor.extract_world_this_week_links(html)
+        article_links = self.extractor.merge_article_links(
+            article_links, wtw_links
+        )
+        article_links = self._sort_edition_articles(article_links)
 
         print(f"Found {len(article_links)} unique articles")
 
@@ -170,6 +175,24 @@ class EconomistScraper:
         if date:
             self.edition.date = date
             print(f"Weekly edition date: {date}")
+
+    def _sort_edition_articles(self, article_links: List[dict]) -> List[dict]:
+        """Order articles by section, with WTW subsections Politics → Business → Cartoon."""
+        from config import SECTION_ORDER
+        from utils import wtw_subsection_sort_key
+
+        section_rank = {name: i for i, name in enumerate(SECTION_ORDER)}
+
+        def sort_key(link: dict) -> tuple:
+            section = link.get('section') or 'Other'
+            section_index = section_rank.get(section, len(SECTION_ORDER))
+            wtw_index = (
+                wtw_subsection_sort_key(link.get('url', ''))
+                if section == 'The world this week' else 0
+            )
+            return (section_index, wtw_index, link.get('title') or '')
+
+        return sorted(article_links, key=sort_key)
 
     def _print_section_counts(self) -> None:
         """Print article counts by section."""
