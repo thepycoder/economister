@@ -1,6 +1,16 @@
 """Configuration and constants for the Economist EPUB generator."""
 
+import os
+from pathlib import Path
 from typing import List
+
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
+
+ECONOMIST_EMAIL = os.getenv("ECONOMIST_EMAIL", "").strip()
+ECONOMIST_PASSWORD = os.getenv("ECONOMIST_PASSWORD", "").strip()
 
 # URLs
 # IMPORTANT: This URL always points to the CURRENT weekly edition only.

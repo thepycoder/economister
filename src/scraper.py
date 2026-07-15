@@ -2,13 +2,16 @@
 
 from typing import List, Optional
 
+import requests
+
 from config import (
-    ARTICLE_LOAD_WAIT_TIME, ECONOMIST_URL, MIN_PARAGRAPHS_PER_ARTICLE
+    ECONOMIST_URL, MIN_PARAGRAPHS_PER_ARTICLE,
+    USER_AGENT,
 )
 from models import Article, Edition
 from utils import (
     extract_date_from_cover_url, extract_date_from_text,
-    save_debug_html
+    is_cartoon_url, save_debug_html,
 )
 from browser import BrowserManager
 from content_extractor import ContentExtractor
@@ -27,11 +30,52 @@ class EconomistScraper:
         self.browser = BrowserManager()
         self.extractor = ContentExtractor(debug=debug)
         self.edition = Edition()
+        self.session: Optional[requests.Session] = None
 
     def initialize(self) -> None:
-        """Initialize browser and authenticate."""
+        """Initialize browser, authenticate, and switch to HTTP session."""
         self.browser.setup()
         self.browser.login()
+        self._refresh_session()
+        self.browser.quit()
+        print("Using authenticated HTTP session for scraping")
+
+    def _refresh_session(self) -> None:
+        """Export browser cookies into a requests session."""
+        self.session = self.browser.export_requests_session()
+
+    def _recover_session(self) -> bool:
+        """Restart browser login after session or tab failure."""
+        print("  Recovering authenticated session...")
+        try:
+            self.browser.setup()
+            self.browser.login()
+            self._refresh_session()
+            self.browser.quit()
+            return True
+        except Exception as exc:
+            print(f"  Session recovery failed: {exc}")
+            return False
+
+    def _fetch_page(self, url: str, wait_time: int = 0) -> str:
+        """Fetch a page using the authenticated HTTP session."""
+        if not self.session:
+            self._recover_session()
+
+        headers = {"User-Agent": USER_AGENT}
+        try:
+            response = self.session.get(url, timeout=30, headers=headers)
+            response.raise_for_status()
+        except requests.RequestException:
+            if not self._recover_session():
+                raise
+            response = self.session.get(url, timeout=30, headers=headers)
+            response.raise_for_status()
+
+        if wait_time:
+            import time
+            time.sleep(wait_time)
+        return response.text
 
     def scrape_weekly_edition(self) -> Edition:
         """Scrape the weekly edition page for article links.
@@ -40,7 +84,7 @@ class EconomistScraper:
             Edition object with article metadata.
         """
         print("Getting article URLs...")
-        html = self.browser.navigate(ECONOMIST_URL)
+        html = self._fetch_page(ECONOMIST_URL)
         save_debug_html("weekly_edition", html, self.debug)
 
         # Extract edition date
@@ -89,10 +133,7 @@ class EconomistScraper:
             return False
 
         try:
-            html = self.browser.navigate(
-                article.url,
-                wait_time=ARTICLE_LOAD_WAIT_TIME
-            )
+            html = self._fetch_page(article.url)
             save_debug_html(article.title or "article", html, self.debug)
 
             # Extract content into the same article object
@@ -104,8 +145,11 @@ class EconomistScraper:
             article.subtitle = extracted.subtitle
             article.content_blocks = extracted.content_blocks
 
-            # Validate minimum content
-            if article.paragraph_count < MIN_PARAGRAPHS_PER_ARTICLE:
+            if is_cartoon_url(article.url):
+                if article.image_count < 1:
+                    print("  ⚠ Skipped cartoon (no image found)")
+                    return False
+            elif article.paragraph_count < MIN_PARAGRAPHS_PER_ARTICLE:
                 print(f"  ⚠ Skipped (only {article.paragraph_count} "
                       f"paragraphs)")
                 return False

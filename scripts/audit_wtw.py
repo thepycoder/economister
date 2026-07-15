@@ -4,6 +4,7 @@
 Usage:
   uv run python scripts/audit_wtw.py              # headless, no login (may be blocked)
   uv run python scripts/audit_wtw.py --login      # manual login via Enter
+  uv run python scripts/audit_wtw.py              # auto-login when .env has credentials
   uv run python scripts/audit_wtw.py --html FILE  # offline analysis of saved HTML
 """
 
@@ -23,8 +24,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from bs4 import BeautifulSoup  # noqa: E402
+from browser import dismiss_cookie_banner, login_automated  # noqa: E402
 from content_extractor import ContentExtractor  # noqa: E402
 from config import (  # noqa: E402
+    ECONOMIST_EMAIL,
+    ECONOMIST_PASSWORD,
     ECONOMIST_URL,
     LOGIN_URL,
     MIN_PARAGRAPHS_PER_ARTICLE,
@@ -200,6 +204,38 @@ def create_chrome_driver(*, headless: bool):
     return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
 
 
+def has_env_credentials() -> bool:
+    """Return True when .env provides Economist login credentials."""
+    return bool(ECONOMIST_EMAIL and ECONOMIST_PASSWORD)
+
+
+def prompt_manual_login(driver) -> None:
+    """Open login page and wait for the user to authenticate."""
+    print(f"Opening login: {LOGIN_URL}")
+    driver.get(LOGIN_URL)
+    dismiss_cookie_banner(driver, timeout=3)
+    print("\n" + "=" * 60)
+    print("Log in in the browser window, then press Enter here.")
+    print("=" * 60)
+    input()
+    dismiss_cookie_banner(driver, timeout=3)
+
+
+def authenticate_driver(driver, *, allow_manual: bool) -> tuple[bool, str]:
+    """Try auto-login from .env, optionally fall back to manual login."""
+    if has_env_credentials():
+        print("Attempting automated login from .env credentials...")
+        if login_automated(driver, ECONOMIST_EMAIL, ECONOMIST_PASSWORD):
+            return True, "auto_login"
+        print("Automated login failed.", file=sys.stderr)
+
+    if allow_manual:
+        prompt_manual_login(driver)
+        return True, "login"
+
+    return False, "headless"
+
+
 def analyze_article_content(html: str, url: str) -> dict[str, Any]:
     """Simulate scraper article extraction and validation."""
     extractor = ContentExtractor()
@@ -269,13 +305,16 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     report: dict[str, Any] = {
-        "audit_mode": "html_file" if args.html else ("login" if args.login else "headless"),
+        "audit_mode": "html_file" if args.html else "headless",
         "login_completed": False,
         "blocked": False,
         "block_reason": None,
         "warning": None,
         "final_url": None,
     }
+
+    has_creds = has_env_credentials()
+    wants_login = args.login or has_creds
 
     driver = None
     try:
@@ -290,18 +329,25 @@ def main() -> int:
                 report["warning"] = reason
         else:
             try:
-                driver = create_chrome_driver(headless=not args.login)
-                if args.login:
-                    print(f"Opening login: {LOGIN_URL}")
-                    driver.get(LOGIN_URL)
-                    print("\n" + "=" * 60)
-                    print("Log in in the browser window, then press Enter here.")
-                    print("=" * 60)
-                    input()
-                    report["login_completed"] = True
+                driver = create_chrome_driver(headless=not wants_login)
+                if wants_login:
+                    logged_in, mode = authenticate_driver(
+                        driver, allow_manual=args.login or not has_creds
+                    )
+                    report["audit_mode"] = mode
+                    report["login_completed"] = logged_in
+                    if not logged_in:
+                        report["blocked"] = True
+                        report["block_reason"] = "login_required"
+                        args.out.write_text(
+                            json.dumps(report, indent=2), encoding="utf-8"
+                        )
+                        print(json.dumps(report, indent=2))
+                        return 1
 
                 print(f"Navigating: {ECONOMIST_URL}")
                 driver.get(ECONOMIST_URL)
+                dismiss_cookie_banner(driver, timeout=3)
                 time.sleep(PAGE_LOAD_WAIT_TIME)
                 html = driver.page_source
                 report["final_url"] = driver.current_url
@@ -336,22 +382,23 @@ def main() -> int:
             elif not wtw_urls:
                 print("Skipping --fetch-articles: no WTW URLs found", file=sys.stderr)
             elif args.html:
-                if not args.login:
+                if not wants_login:
                     print(
-                        "Skipping --fetch-articles: use --login with --html "
-                        "to fetch article pages in a browser session",
+                        "Skipping --fetch-articles: use --login or .env "
+                        "credentials to fetch article pages in a browser session",
                         file=sys.stderr,
                     )
                 else:
                     driver = create_chrome_driver(headless=False)
-                    print(f"Opening login: {LOGIN_URL}")
-                    driver.get(LOGIN_URL)
-                    print("\n" + "=" * 60)
-                    print("Log in in the browser window, then press Enter here.")
-                    print("=" * 60)
-                    input()
-                    report["login_completed"] = True
-                    report["wtw_article_content"] = fetch_wtw_articles(driver, wtw_urls)
+                    logged_in, mode = authenticate_driver(
+                        driver, allow_manual=args.login or not has_creds
+                    )
+                    report["audit_mode"] = mode
+                    report["login_completed"] = logged_in
+                    if logged_in:
+                        report["wtw_article_content"] = fetch_wtw_articles(
+                            driver, wtw_urls
+                        )
             else:
                 report["wtw_article_content"] = fetch_wtw_articles(driver, wtw_urls)
     finally:

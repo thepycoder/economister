@@ -9,6 +9,7 @@ from utils import (
     create_directories, sanitize_filename, save_debug_html,
     convert_symbols, parse_edition_date, extract_date_from_cover_url,
     extract_date_from_text, is_valid_article_url, detect_section_from_url,
+    is_cartoon_url,
     wtw_subsection_sort_key,
 )
 
@@ -210,6 +211,18 @@ class TestURLValidation(unittest.TestCase):
 
     def test_wtw_subsection_sort_key(self):
         """Test WTW subsection ordering."""
+        self.assertTrue(
+            is_cartoon_url(
+                "https://www.economist.com/the-world-this-week/"
+                "2026/07/09/cartoon-the-real-threat"
+            )
+        )
+        self.assertFalse(
+            is_cartoon_url(
+                "https://www.economist.com/the-world-this-week/"
+                "2026/07/09/politics"
+            )
+        )
         self.assertLess(
             wtw_subsection_sort_key(
                 "https://www.economist.com/the-world-this-week/2026/07/09/politics"

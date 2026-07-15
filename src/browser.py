@@ -2,12 +2,409 @@
 
 import atexit
 import time
-from typing import Optional
+from typing import List, Optional
 
+import requests
 from selenium import webdriver
+from selenium.common.exceptions import (
+  ElementClickInterceptedException,
+  TimeoutException,
+  WebDriverException,
+)
 from selenium.webdriver.chrome.webdriver import WebDriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
-from config import LOGIN_URL, PAGE_LOAD_WAIT_TIME
+from config import (
+  ECONOMIST_EMAIL,
+  ECONOMIST_PASSWORD,
+  ECONOMIST_URL,
+  LOGIN_URL,
+  PAGE_LOAD_WAIT_TIME,
+  USER_AGENT,
+)
+
+COOKIE_BANNER_SELECTORS = [
+  "#onetrust-accept-btn-handler",
+  "button#onetrust-accept-btn-handler",
+  "#accept-recommended-btn-handler",
+  ".onetrust-close-btn-handler",
+  "button[aria-label='Accept cookies']",
+  "button[aria-label='Accept all cookies']",
+  "button[title='Accept Cookies']",
+]
+
+CONSENT_IFRAME_SELECTORS = [
+  "iframe[src*='consent.economist.com']",
+  "iframe[id^='sp_message_iframe']",
+  "iframe[title*='Privacy and Consent']",
+]
+
+CONSENT_ACCEPT_CSS_SELECTORS = [
+  "button.sp_choice_type_11",
+  "button[title='Accept all']",
+  "button[aria-label='Accept all']",
+]
+
+CONSENT_ACCEPT_XPATH_SELECTORS = [
+  "//button[normalize-space()='Accept all']",
+]
+
+# Salesforce Community login (myaccount.economist.com) uses LWC inputs.
+EMAIL_CSS_SELECTORS = [
+  "input[name='username']",
+  "input[inputmode='email']",
+  "input.slds-input[inputmode='email']",
+  "input[type='email']",
+  "input#username",
+  "input[autocomplete='username']",
+]
+
+EMAIL_XPATH_SELECTORS = [
+  "//input[@name='username']",
+  "//label[contains(.,'Email')]/..//input",
+]
+
+PASSWORD_CSS_SELECTORS = [
+  "input[name='password']",
+  "input[type='password']",
+  "input#password",
+  "input[autocomplete='current-password']",
+]
+
+PASSWORD_XPATH_SELECTORS = [
+  "//input[@name='password']",
+  "//label[contains(.,'Password')]/..//input",
+]
+
+SUBMIT_CSS_SELECTORS = [
+  "button.slds-button_brand[type='submit']",
+  "button[type='submit']",
+  "input[type='submit']",
+  "button.login-button",
+  "button[name='Login']",
+]
+
+SUBMIT_XPATH_SELECTORS = [
+  "//button[@type='submit' and contains(.,'Log in')]",
+  "//button[normalize-space()='Log in']",
+]
+
+
+def _safe_current_url(driver: WebDriver) -> str:
+  """Return current URL, or empty string if the browser tab is gone."""
+  try:
+    return driver.current_url
+  except WebDriverException:
+    return ""
+
+
+def _wait_for_page_ready(driver: WebDriver, timeout: int = 30) -> bool:
+  """Wait until document.readyState is complete."""
+  try:
+    WebDriverWait(driver, timeout).until(
+      lambda d: d.execute_script("return document.readyState")
+      == "complete"
+    )
+    return True
+  except (TimeoutException, WebDriverException):
+    return False
+
+
+def _is_still_authenticating(url: str) -> bool:
+  """Return True while the browser is still in the login/OAuth flow."""
+  url = url.lower()
+  if "/api/auth/login" in url:
+    return True
+  if "myaccount.economist.com/s/login" in url:
+    return True
+  if "remoteaccessauthorizationpage" in url:
+    return True
+  if "myaccount.economist.com/setup/secur" in url:
+    return True
+  return False
+
+
+def _wait_for_login_complete(driver: WebDriver, timeout: int = 60) -> bool:
+  """Wait for Salesforce OAuth to finish on economist.com."""
+  print("Waiting for login redirect...")
+  try:
+    WebDriverWait(driver, timeout).until(
+      lambda d: (
+        not _is_still_authenticating(_safe_current_url(d))
+        and "economist.com" in _safe_current_url(d).lower()
+      )
+    )
+    _wait_for_page_ready(driver, timeout=30)
+    time.sleep(1)
+    return True
+  except TimeoutException:
+    url = _safe_current_url(driver).lower()
+    if _is_still_authenticating(url):
+      return False
+    return "economist.com" in url
+
+
+def _find_element(
+  driver: WebDriver,
+  css_selectors: List[str],
+  xpath_selectors: Optional[List[str]] = None,
+  timeout: int = 20,
+):
+  """Return the first element matching any CSS or XPath selector."""
+  deadline = time.time() + timeout
+  while time.time() < deadline:
+    for selector in css_selectors:
+      for element in driver.find_elements(By.CSS_SELECTOR, selector):
+        if element.is_displayed():
+          return element
+    for xpath in xpath_selectors or []:
+      for element in driver.find_elements(By.XPATH, xpath):
+        if element.is_displayed():
+          return element
+    time.sleep(0.25)
+  raise TimeoutException(
+    f"No elements found for selectors: {css_selectors + (xpath_selectors or [])}"
+  )
+
+
+def _element_exists(
+  driver: WebDriver,
+  css_selectors: List[str],
+  xpath_selectors: Optional[List[str]] = None,
+  timeout: int = 3,
+) -> bool:
+  """Return True if any selector matches a visible element."""
+  try:
+    _find_element(
+      driver, css_selectors, xpath_selectors, timeout=timeout
+    )
+    return True
+  except TimeoutException:
+    return False
+
+
+def _fill_first(
+  driver: WebDriver,
+  css_selectors: List[str],
+  value: str,
+  xpath_selectors: Optional[List[str]] = None,
+  timeout: int = 20,
+) -> bool:
+  """Fill the first matching input field."""
+  try:
+    field = _find_element(
+      driver, css_selectors, xpath_selectors, timeout=timeout
+    )
+    field.click()
+    field.clear()
+    field.send_keys(value)
+    return True
+  except TimeoutException:
+    return False
+
+
+def _click_element(driver: WebDriver, element) -> None:
+  """Click an element, falling back to JavaScript if obscured."""
+  driver.execute_script(
+    "arguments[0].scrollIntoView({block: 'center'});", element
+  )
+  time.sleep(0.2)
+  try:
+    element.click()
+  except ElementClickInterceptedException:
+    driver.execute_script("arguments[0].click();", element)
+
+
+def _click_first(
+  driver: WebDriver,
+  css_selectors: List[str],
+  xpath_selectors: Optional[List[str]] = None,
+  timeout: int = 10,
+) -> bool:
+  """Click the first matching clickable element."""
+  try:
+    button = _find_element(
+      driver, css_selectors, xpath_selectors, timeout=timeout
+    )
+    _click_element(driver, button)
+    return True
+  except TimeoutException:
+    return False
+
+
+def _find_consent_iframe(driver: WebDriver):
+  """Return the Sourcepoint consent iframe if present."""
+  for selector in CONSENT_IFRAME_SELECTORS:
+    for iframe in driver.find_elements(By.CSS_SELECTOR, selector):
+      try:
+        if iframe.is_displayed():
+          return iframe
+      except WebDriverException:
+        continue
+  return None
+
+
+def _dismiss_onetrust_banner(driver: WebDriver) -> bool:
+  """Click a OneTrust accept button on the main page."""
+  for selector in COOKIE_BANNER_SELECTORS:
+    for button in driver.find_elements(By.CSS_SELECTOR, selector):
+      try:
+        if button.is_displayed() and button.is_enabled():
+          _click_element(driver, button)
+          time.sleep(0.5)
+          return True
+      except WebDriverException:
+        continue
+  return False
+
+
+def _dismiss_sourcepoint_consent(driver: WebDriver) -> bool:
+  """Accept cookies in the Economist Sourcepoint consent iframe."""
+  iframe = _find_consent_iframe(driver)
+  if not iframe:
+    return False
+
+  try:
+    driver.switch_to.frame(iframe)
+    button = _find_element(
+      driver,
+      CONSENT_ACCEPT_CSS_SELECTORS,
+      CONSENT_ACCEPT_XPATH_SELECTORS,
+      timeout=3,
+    )
+    _click_element(driver, button)
+    time.sleep(0.5)
+    return True
+  except (TimeoutException, WebDriverException):
+    return False
+  finally:
+    try:
+      driver.switch_to.default_content()
+    except WebDriverException:
+      pass
+
+
+def dismiss_cookie_banner(
+  driver: WebDriver, timeout: int = 2
+) -> bool:
+  """Try to dismiss Economist cookie/consent banners.
+
+  The site uses a Sourcepoint iframe (consent.economist.com) rather than
+  an on-page OneTrust bar. This polls for both.
+
+  Args:
+      driver: Active WebDriver instance.
+      timeout: Total seconds to poll for a dismiss button.
+
+  Returns:
+      True if a banner was dismissed.
+  """
+  deadline = time.time() + timeout
+  while time.time() < deadline:
+    try:
+      if _dismiss_onetrust_banner(driver):
+        return True
+      if _dismiss_sourcepoint_consent(driver):
+        return True
+    except WebDriverException:
+      return False
+    time.sleep(0.3)
+  return False
+
+
+def _wait_for_login_page(driver: WebDriver, timeout: int = 30) -> bool:
+  """Wait until the Salesforce login form is rendered."""
+  try:
+    WebDriverWait(driver, timeout).until(
+      lambda d: "myaccount.economist.com" in d.current_url
+    )
+    _find_element(
+      driver,
+      EMAIL_CSS_SELECTORS,
+      EMAIL_XPATH_SELECTORS,
+      timeout=timeout,
+    )
+    return True
+  except TimeoutException:
+    return False
+
+
+def _verify_logged_in(driver: WebDriver) -> bool:
+  """Confirm the browser has an authenticated Economist session."""
+  if not _wait_for_login_complete(driver):
+    return False
+
+  print("Dismissing cookie banner...")
+  dismiss_cookie_banner(driver, timeout=10)
+
+  current = _safe_current_url(driver).lower()
+  if "weeklyedition" not in current:
+    print("Opening weekly edition...")
+    try:
+      driver.get(ECONOMIST_URL)
+      _wait_for_page_ready(driver)
+      time.sleep(1)
+      dismiss_cookie_banner(driver, timeout=10)
+    except WebDriverException as exc:
+      print(f"Could not open weekly edition: {exc}")
+      return False
+
+  current = _safe_current_url(driver).lower()
+  if "login" in current or "myaccount.economist.com" in current:
+    return False
+  return True
+
+
+def login_automated(
+  driver: WebDriver, email: str, password: str
+) -> bool:
+  """Log in via Salesforce redirect using email and password.
+
+  Args:
+      driver: Active WebDriver instance.
+      email: Economist account email.
+      password: Economist account password.
+
+  Returns:
+      True if login succeeded and session was verified.
+  """
+  print("Navigating to login page...")
+  driver.get(LOGIN_URL)
+  dismiss_cookie_banner(driver, timeout=2)
+
+  print("Waiting for login form...")
+  if not _wait_for_login_page(driver):
+    print("Timed out waiting for login form")
+    return False
+
+  print("Entering email...")
+  if not _fill_first(
+    driver, EMAIL_CSS_SELECTORS, email, EMAIL_XPATH_SELECTORS
+  ):
+    print("Could not find email field")
+    return False
+
+  print("Entering password...")
+  if not _fill_first(
+    driver, PASSWORD_CSS_SELECTORS, password, PASSWORD_XPATH_SELECTORS
+  ):
+    print("Could not find password field")
+    return False
+
+  print("Submitting login...")
+  if not _click_first(
+    driver, SUBMIT_CSS_SELECTORS, SUBMIT_XPATH_SELECTORS
+  ):
+    print("Could not find login submit button")
+    return False
+
+  if _verify_logged_in(driver):
+    return True
+
+  print("Login submitted but session verification failed")
+  return False
 
 
 class BrowserManager:
@@ -32,6 +429,14 @@ class BrowserManager:
       options.add_argument("--disable-gpu")
       options.add_argument("--no-sandbox")
       options.add_argument("--disable-dev-shm-usage")
+      options.page_load_strategy = "eager"
+      options.add_experimental_option(
+        "prefs",
+        {
+          "profile.managed_default_content_settings.images": 2,
+          "profile.default_content_setting_values.notifications": 2,
+        },
+      )
       self.driver = webdriver.Chrome(options=options)
     except Exception as e:
       raise RuntimeError(
@@ -39,18 +444,73 @@ class BrowserManager:
         f"are installed: {e}"
       )
 
-  def login(self) -> None:
-    """Navigate to login page and wait for manual authentication."""
+  def _is_browser_healthy(self) -> bool:
+    """Return False if the browser tab has crashed or the session is dead."""
+    if not self.driver:
+      return False
+    try:
+      _ = self.driver.current_url
+      return True
+    except WebDriverException:
+      return False
+
+  def _restart_browser(self) -> None:
+    """Restart Chrome after a tab crash."""
+    print("Restarting browser after tab crash...")
+    self.quit()
+    self.setup()
+
+  def export_requests_session(self) -> requests.Session:
+    """Copy authenticated browser cookies into a requests session."""
     if not self.driver:
       raise RuntimeError("Browser not initialized. Call setup() first.")
 
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+    for cookie in self.driver.get_cookies():
+      session.cookies.set(
+        cookie["name"],
+        cookie["value"],
+        domain=cookie.get("domain"),
+        path=cookie.get("path", "/"),
+      )
+    return session
+
+  def login(self) -> None:
+    """Authenticate via .env credentials or manual browser login."""
+    if not self.driver:
+      raise RuntimeError("Browser not initialized. Call setup() first.")
+
+    if ECONOMIST_EMAIL and ECONOMIST_PASSWORD:
+      print("Attempting automated login from .env credentials...")
+      try:
+        if login_automated(
+          self.driver, ECONOMIST_EMAIL, ECONOMIST_PASSWORD
+        ):
+          print("Login complete")
+          return
+      except WebDriverException as e:
+        print(f"Automated login error: {e}")
+      except Exception as e:
+        print(f"Automated login error: {e}")
+      print("Automated login failed, falling back to manual login...")
+
+    if not self._is_browser_healthy():
+      self._restart_browser()
+
+    self._login_manual()
+
+  def _login_manual(self) -> None:
+    """Navigate to login page and wait for manual authentication."""
     print("Navigating to login page...")
     self.driver.get(LOGIN_URL)
+    dismiss_cookie_banner(self.driver, timeout=3)
     print("\n" + "=" * 60)
     print("Please log in to The Economist in the browser")
     print("After logging in, press Enter to continue...")
     print("=" * 60 + "\n")
     input()
+    dismiss_cookie_banner(self.driver, timeout=3)
     print("Login complete")
 
   def navigate(self, url: str, wait_time: int = PAGE_LOAD_WAIT_TIME) -> str:
@@ -67,6 +527,7 @@ class BrowserManager:
       raise RuntimeError("Browser not initialized. Call setup() first.")
 
     self.driver.get(url)
+    dismiss_cookie_banner(self.driver, timeout=3)
     time.sleep(wait_time)
     return self.driver.page_source
 

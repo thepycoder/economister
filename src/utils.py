@@ -151,6 +151,14 @@ def is_world_this_week_url(href: str) -> bool:
     return isinstance(href, str) and '/the-world-this-week/' in href
 
 
+def is_cartoon_url(url: str) -> bool:
+    """Return True if URL is a weekly cartoon article."""
+    if not url:
+        return False
+    slug = url.rstrip('/').split('/')[-1].lower()
+    return slug.startswith('cartoon')
+
+
 def wtw_subsection_sort_key(url: str) -> int:
     """Sort key for WTW articles: Politics → Business → Cartoon."""
     if not url:

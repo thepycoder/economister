@@ -125,6 +125,31 @@ MOCK_ARTICLE_JOBS_HTML = """
 </html>
 """
 
+MOCK_CARTOON_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cartoon: Test headline</title>
+    <meta property="og:image" content="https://example.com/cartoon_hero.png">
+</head>
+<body>
+    <main id="content">
+        <article>
+            <h1>Cartoon: Test headline</h1>
+            <h2>A lighter take on the news</h2>
+            <figure>
+                <img src="https://example.com/cartoon_hero.png" alt="Cartoon">
+                <figcaption>Illustration: KAL</figcaption>
+            </figure>
+            <p class="e1y9q0ei" data-component="paragraph">
+                Dig deeper into the subjects of this week's cartoon.
+            </p>
+        </article>
+    </main>
+</body>
+</html>
+"""
+
 # Mock article HTML - Fast inverse square root
 MOCK_ARTICLE_QUAKE_HTML = """
 <!DOCTYPE html>
