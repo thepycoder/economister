@@ -5,13 +5,13 @@ from typing import List, Optional
 import requests
 
 from config import (
-    ECONOMIST_URL, MIN_PARAGRAPHS_PER_ARTICLE,
+    ECONOMIST_URL,
     USER_AGENT,
 )
 from models import Article, Edition
 from utils import (
     extract_date_from_cover_url, extract_date_from_text,
-    is_cartoon_url, save_debug_html,
+    has_extractable_content, save_debug_html,
 )
 from browser import BrowserManager
 from content_extractor import ContentExtractor
@@ -145,13 +145,8 @@ class EconomistScraper:
             article.subtitle = extracted.subtitle
             article.content_blocks = extracted.content_blocks
 
-            if is_cartoon_url(article.url):
-                if article.image_count < 1:
-                    print("  ⚠ Skipped cartoon (no image found)")
-                    return False
-            elif article.paragraph_count < MIN_PARAGRAPHS_PER_ARTICLE:
-                print(f"  ⚠ Skipped (only {article.paragraph_count} "
-                      f"paragraphs)")
+            if not has_extractable_content(article):
+                print("  ⚠ Skipped (no text or images found)")
                 return False
 
             print(f"  ✓ Extracted {article.paragraph_count} paragraphs, "

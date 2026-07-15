@@ -150,6 +150,26 @@ MOCK_CARTOON_HTML = """
 </html>
 """
 
+MOCK_INDICATORS_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Economic data, commodities and markets</title>
+    <meta property="og:image" content="https://example.com/indicators_table.png">
+</head>
+<body>
+    <main id="content">
+        <article>
+            <h1>Economic data, commodities and markets</h1>
+            <figure>
+                <img src="https://example.com/indicators_table.png" alt="Indicators">
+            </figure>
+        </article>
+    </main>
+</body>
+</html>
+"""
+
 # Mock article HTML - Fast inverse square root
 MOCK_ARTICLE_QUAKE_HTML = """
 <!DOCTYPE html>

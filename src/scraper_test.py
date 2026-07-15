@@ -7,6 +7,7 @@ from models import Article, Edition
 from test_fixtures import (
     MOCK_ARTICLE_JOBS_HTML,
     MOCK_CARTOON_HTML,
+    MOCK_INDICATORS_HTML,
     MOCK_WEEKLY_EDITION_HTML,
     MOCK_WEEKLY_EDITION_WTW_HTML,
 )
@@ -131,6 +132,35 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertGreaterEqual(article.image_count, 1)
         self.assertEqual(article.paragraph_count, 1)
 
+    @patch('scraper.save_debug_html')
+    @patch('scraper.BrowserManager')
+    def test_scrape_image_only_article(
+        self, mock_browser_class, mock_save_debug
+    ):
+        """Test image-only articles such as financial indicators are kept."""
+        mock_session = Mock()
+        mock_session.get.return_value = self._mock_response(
+            MOCK_INDICATORS_HTML
+        )
+        mock_browser_class.return_value = Mock()
+
+        scraper = EconomistScraper(debug=True)
+        scraper.session = mock_session
+        article = Article(
+            title="Economic data, commodities and markets",
+            url=(
+                "https://www.economist.com/economic-and-financial-indicators/"
+                "2026/07/09/indicators"
+            ),
+            section="Economic & financial indicators",
+        )
+
+        result = scraper.scrape_article(article)
+
+        self.assertTrue(result)
+        self.assertEqual(article.paragraph_count, 0)
+        self.assertGreaterEqual(article.image_count, 1)
+
     @patch('scraper.BrowserManager')
     def test_scrape_article_no_url(self, mock_browser_class):
         """Test scraping article without URL."""
@@ -143,14 +173,12 @@ class TestEconomistScraper(unittest.TestCase):
 
     @patch('scraper.BrowserManager')
     def test_scrape_article_too_short(self, mock_browser_class):
-        """Test scraping article with insufficient content."""
+        """Test scraping article with no extractable content."""
         mock_session = Mock()
         mock_session.get.return_value = self._mock_response("""
         <html>
-            <h1>Short Article</h1>
-            <div data-component="article-body">
-                <p class="e1y9q0ei">Too short.</p>
-            </div>
+            <h1>Empty Article</h1>
+            <div data-component="article-body"></div>
         </html>
         """)
         mock_browser_class.return_value = Mock()

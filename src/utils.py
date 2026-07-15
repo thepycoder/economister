@@ -159,6 +159,11 @@ def is_cartoon_url(url: str) -> bool:
     return slug.startswith('cartoon')
 
 
+def has_extractable_content(article) -> bool:
+    """Return True if an article has at least one paragraph or image."""
+    return article.paragraph_count > 0 or article.image_count > 0
+
+
 def wtw_subsection_sort_key(url: str) -> int:
     """Sort key for WTW articles: Politics → Business → Cartoon."""
     if not url:

@@ -68,7 +68,6 @@ COVER_PATTERNS: List[str] = ["_DE_", "_FH", "cover"]
 
 # Processing limits
 MIN_PARAGRAPH_LENGTH = 40
-MIN_PARAGRAPHS_PER_ARTICLE = 3
 MAX_IMAGES_PER_ARTICLE = 3
 
 # Image settings

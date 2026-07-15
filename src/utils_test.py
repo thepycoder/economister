@@ -5,10 +5,12 @@ from datetime import datetime
 from pathlib import Path
 import tempfile
 import shutil
+from models import Article
 from utils import (
     create_directories, sanitize_filename, save_debug_html,
     convert_symbols, parse_edition_date, extract_date_from_cover_url,
     extract_date_from_text, is_valid_article_url, detect_section_from_url,
+    has_extractable_content,
     is_cartoon_url,
     wtw_subsection_sort_key,
 )
@@ -223,6 +225,11 @@ class TestURLValidation(unittest.TestCase):
                 "2026/07/09/politics"
             )
         )
+        article = Article(url="https://example.com/indicators")
+        article.add_image(src="https://example.com/table.png")
+        self.assertTrue(has_extractable_content(article))
+        empty = Article(url="https://example.com/empty")
+        self.assertFalse(has_extractable_content(empty))
         self.assertLess(
             wtw_subsection_sort_key(
                 "https://www.economist.com/the-world-this-week/2026/07/09/politics"

@@ -31,10 +31,13 @@ from config import (  # noqa: E402
     ECONOMIST_PASSWORD,
     ECONOMIST_URL,
     LOGIN_URL,
-    MIN_PARAGRAPHS_PER_ARTICLE,
     PAGE_LOAD_WAIT_TIME,
 )
-from utils import detect_section_from_url, is_valid_article_url  # noqa: E402
+from utils import (  # noqa: E402
+    detect_section_from_url,
+    has_extractable_content,
+    is_valid_article_url,
+)
 
 
 WTW_SELECTOR = "div.layout-weekly-edition-wtw"
@@ -251,9 +254,7 @@ def analyze_article_content(html: str, url: str) -> dict[str, Any]:
         "title": article.title,
         "paragraph_count": article.paragraph_count,
         "image_count": article.image_count,
-        "would_pass_min_paragraphs": (
-            article.paragraph_count >= MIN_PARAGRAPHS_PER_ARTICLE
-        ),
+        "would_pass_content_check": has_extractable_content(article),
         "raw_p_tag_count": len(p_tags),
         "raw_li_count": len(list_items),
         "data_component_paragraph_count": len(data_paragraphs),
