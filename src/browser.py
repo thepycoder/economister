@@ -5,6 +5,7 @@ import time
 from typing import List, Optional
 
 import requests
+from requests.cookies import create_cookie
 from selenium import webdriver
 from selenium.common.exceptions import (
   ElementClickInterceptedException,
@@ -468,11 +469,17 @@ class BrowserManager:
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     for cookie in self.driver.get_cookies():
-      session.cookies.set(
-        cookie["name"],
-        cookie["value"],
-        domain=cookie.get("domain"),
-        path=cookie.get("path", "/"),
+      expires = cookie.get("expiry")
+      session.cookies.set_cookie(
+        create_cookie(
+          name=cookie["name"],
+          value=cookie["value"],
+          domain=cookie.get("domain"),
+          path=cookie.get("path", "/"),
+          secure=bool(cookie.get("secure")),
+          expires=expires,
+          rest={"HttpOnly": cookie.get("httpOnly")},
+        )
       )
     return session
 

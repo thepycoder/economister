@@ -1,10 +1,13 @@
 """Main scraper orchestrator for The Economist."""
 
+import time
 from typing import List, Optional
 
 import requests
+from requests.cookies import create_cookie
 
 from config import (
+    ARTICLE_FETCH_COOLDOWN,
     ECONOMIST_URL,
     USER_AGENT,
 )
@@ -57,25 +60,62 @@ class EconomistScraper:
             print(f"  Session recovery failed: {exc}")
             return False
 
+    def _is_auth_failure(self, response: requests.Response) -> bool:
+        """Return True when the response indicates an expired login."""
+        if response.status_code in (401, 403):
+            return True
+
+        final_url = response.url.lower()
+        if "/api/auth/login" in final_url or "myaccount.economist.com" in final_url:
+            return True
+
+        snippet = response.text[:8000].lower()
+        paywall_markers = (
+            "already have an account?",
+            "continue with a free trial",
+            "create account to unlock",
+            "get full access to our independent journalism",
+        )
+        return any(marker in snippet for marker in paywall_markers)
+
     def _fetch_page(self, url: str, wait_time: int = 0) -> str:
         """Fetch a page using the authenticated HTTP session."""
         if not self.session:
             self._recover_session()
 
         headers = {"User-Agent": USER_AGENT}
-        try:
-            response = self.session.get(url, timeout=30, headers=headers)
-            response.raise_for_status()
-        except requests.RequestException:
-            if not self._recover_session():
-                raise
-            response = self.session.get(url, timeout=30, headers=headers)
-            response.raise_for_status()
+        recovered = False
+        last_response: Optional[requests.Response] = None
 
-        if wait_time:
-            import time
-            time.sleep(wait_time)
-        return response.text
+        for attempt in range(4):
+            try:
+                response = self.session.get(url, timeout=30, headers=headers)
+            except (requests.Timeout, requests.ConnectionError):
+                if attempt < 3:
+                    time.sleep(min(2 ** attempt, 8))
+                    continue
+                raise
+
+            last_response = response
+
+            if response.status_code in (429, 502, 503, 504) and attempt < 3:
+                time.sleep(min(2 ** attempt, 8))
+                continue
+
+            if self._is_auth_failure(response):
+                if not recovered and self._recover_session():
+                    recovered = True
+                    continue
+                response.raise_for_status()
+
+            response.raise_for_status()
+            if wait_time:
+                time.sleep(wait_time)
+            return response.text
+
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise requests.RequestException(f"Failed to fetch {url}")
 
     def scrape_weekly_edition(self) -> Edition:
         """Scrape the weekly edition page for article links.
@@ -183,6 +223,9 @@ class EconomistScraper:
 
             if self.scrape_article(article):
                 successful_articles.append(article)
+
+            if i < len(articles):
+                time.sleep(ARTICLE_FETCH_COOLDOWN)
 
         return successful_articles
 

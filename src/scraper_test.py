@@ -2,6 +2,8 @@
 
 import unittest
 from unittest.mock import Mock, patch, MagicMock, ANY
+
+import requests
 from scraper import EconomistScraper
 from models import Article, Edition
 from test_fixtures import (
@@ -20,9 +22,15 @@ class TestEconomistScraper(unittest.TestCase):
         """Set up test fixtures."""
         self.scraper = EconomistScraper(debug=False)
 
-    def _mock_response(self, html: str) -> Mock:
+    def _mock_response(
+        self,
+        html: str,
+        url: str = "https://www.economist.com/test",
+    ) -> Mock:
         response = Mock()
         response.text = html
+        response.url = url
+        response.status_code = 200
         response.raise_for_status = Mock()
         return response
 
@@ -190,6 +198,54 @@ class TestEconomistScraper(unittest.TestCase):
         result = scraper.scrape_article(article)
 
         self.assertFalse(result)
+
+    @patch('scraper.BrowserManager')
+    def test_fetch_page_recovers_only_on_auth_failure(
+        self, mock_browser_class
+    ):
+        """Test rate limits retry without re-login, auth errors recover once."""
+        mock_session = Mock()
+        paywall = Mock()
+        paywall.status_code = 200
+        paywall.url = "https://www.economist.com/article"
+        paywall.text = "<html>Already have an account? Log in</html>"
+        paywall.raise_for_status = Mock()
+
+        ok = Mock()
+        ok.status_code = 200
+        ok.url = "https://www.economist.com/article"
+        ok.text = "<html><h1>Article</h1></html>"
+        ok.raise_for_status = Mock()
+
+        too_many = Mock()
+        too_many.status_code = 429
+        too_many.url = "https://www.economist.com/article"
+        too_many.text = ""
+        too_many.raise_for_status = Mock(
+            side_effect=requests.HTTPError(response=too_many)
+        )
+
+        mock_session.get.side_effect = [paywall, ok]
+        mock_browser = Mock()
+        mock_browser.export_requests_session.return_value = mock_session
+        mock_browser_class.return_value = mock_browser
+
+        scraper = EconomistScraper()
+        scraper.session = mock_session
+
+        with patch.object(scraper, '_recover_session', return_value=True) as recover:
+            html = scraper._fetch_page("https://www.economist.com/article")
+
+        recover.assert_called_once()
+        self.assertIn("Article", html)
+
+        recover.reset_mock()
+        mock_session.get.side_effect = [too_many, too_many, too_many, too_many]
+        with patch.object(scraper, '_recover_session') as recover:
+            with self.assertRaises(requests.HTTPError):
+                scraper._fetch_page("https://www.economist.com/article")
+
+        recover.assert_not_called()
 
     @patch('scraper.BrowserManager')
     def test_scrape_article_error(self, mock_browser_class):
