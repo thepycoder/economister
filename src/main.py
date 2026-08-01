@@ -29,6 +29,7 @@ def main() -> None:
 Examples:
   %(prog)s                     # Process all articles from current edition
   %(prog)s --limit 10          # Process only first 10 articles from current edition
+  %(prog)s --until-section Leaders  # Stop after Leaders section
   %(prog)s --debug --limit 5   # Debug mode with 5 articles from current edition
 
 NOTE: This tool only downloads the CURRENT weekly edition.
@@ -47,6 +48,13 @@ Targeting specific past editions is not supported by design.
         type=int,
         metavar='N',
         help='Limit number of articles to process (e.g., --limit 10)'
+    )
+
+    parser.add_argument(
+        '--until-section',
+        type=str,
+        metavar='NAME',
+        help='Scrape through this section inclusive (e.g. Leaders), then stop'
     )
 
     args = parser.parse_args()
@@ -78,7 +86,10 @@ Targeting specific past editions is not supported by design.
             return
 
         # Scrape article content
-        successful_articles = scraper.scrape_articles(limit=args.limit)
+        successful_articles = scraper.scrape_articles(
+            limit=args.limit,
+            until_section=args.until_section,
+        )
 
         if not successful_articles:
             print("No articles successfully scraped!")

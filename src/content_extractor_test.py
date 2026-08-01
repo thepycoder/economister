@@ -7,7 +7,9 @@ from test_fixtures import (
     MOCK_ARTICLE_INTERACTIVE_HTML,
     MOCK_ARTICLE_JOBS_HTML,
     MOCK_ARTICLE_LOREM_HTML,
+    MOCK_ARTICLE_MORE_FROM_HTML,
     MOCK_ARTICLE_QUAKE_HTML,
+    MOCK_ARTICLE_VIDEO_POSTER_HTML,
     MOCK_WEEKLY_EDITION_HTML,
     MOCK_WEEKLY_EDITION_WTW_HTML,
 )
@@ -234,6 +236,38 @@ class TestContentExtractor(unittest.TestCase):
         self.assertEqual(article.title, "Photo essay headline")
         self.assertGreaterEqual(article.paragraph_count, 2)
         self.assertGreaterEqual(article.image_count, 1)
+
+    def test_skips_more_from_related_figures(self):
+        """Related-article heroes after 'More from' must not be ingested."""
+        self.extractor.seen_image_urls = set()
+        article = self.extractor.extract_article(
+            MOCK_ARTICLE_MORE_FROM_HTML,
+            url="https://www.economist.com/leaders/2026/07/29/post-quantum",
+        )
+        self.assertEqual(article.paragraph_count, 2)
+        self.assertEqual(article.image_count, 1)
+        image_srcs = [
+            b.image.src for b in article.content_blocks if b.type == 'image'
+        ]
+        self.assertTrue(any('LDP503' in src for src in image_srcs))
+        self.assertFalse(any('LDP504' in src for src in image_srcs))
+        self.assertFalse(any('LDP505' in src for src in image_srcs))
+
+    def test_video_poster_preferred_over_og_image(self):
+        """Interactive articles should use video poster as hero."""
+        self.extractor.seen_image_urls = set()
+        article = self.extractor.extract_article(
+            MOCK_ARTICLE_VIDEO_POSTER_HTML,
+            url="https://www.economist.com/interactive/leaders/sample",
+        )
+        self.assertGreaterEqual(article.paragraph_count, 1)
+        self.assertEqual(article.image_count, 1)
+        hero = next(
+            b.image for b in article.content_blocks if b.type == 'image'
+        )
+        self.assertTrue(hero.is_hero)
+        self.assertIn('leader_bigmac_1920.jpg', hero.src)
+        self.assertNotIn('promo.jpg', hero.src)
 
     def test_hero_image_extraction(self):
         """Test hero image extraction."""

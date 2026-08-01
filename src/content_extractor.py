@@ -11,6 +11,7 @@ from config import (
     COVER_PATTERNS, IMAGE_SKIP_PATTERNS, MIN_PARAGRAPH_LENGTH,
     SKIP_PHRASES
 )
+from hypothesis_log import PROBE, asset_key
 from models import Article
 from utils import (
     EditionParseError, SKIP_SECTION_HEADINGS, convert_symbols,
@@ -43,6 +44,8 @@ class ContentExtractor:
         """
         soup = BeautifulSoup(html, 'html.parser')
         article = Article(url=url)
+        PROBE.article_start(url or '', article.title, None)
+        PROBE.fetch_quality(url or '', html)
 
         # Extract title
         h1 = soup.find('h1')
@@ -53,19 +56,40 @@ class ContentExtractor:
         article.subtitle = self._extract_subtitle(soup)
 
         # Extract hero image
-        hero_url = self._extract_hero_image(html)
+        hero_url, hero_source = self._extract_hero_image(html)
         if hero_url and hero_url not in self.seen_image_urls:
             if not any(skip in hero_url for skip in IMAGE_SKIP_PATTERNS):
+                near = PROBE.near_dupe_lookup(hero_url, self.seen_image_urls)
                 article.add_image(
                     src=hero_url,
                     is_hero=True
                 )
                 self.seen_image_urls.add(hero_url)
+                PROBE.hero_extracted(
+                    url or '', hero_url, hero_source, accepted=True,
+                    reason=f'near_dupe_of={near}' if near else None,
+                )
+            else:
+                PROBE.hero_extracted(
+                    url or '', hero_url, hero_source, accepted=False,
+                    reason='skip_pattern',
+                )
+        elif hero_url:
+            near = PROBE.near_dupe_lookup(hero_url, self.seen_image_urls)
+            PROBE.hero_extracted(
+                url or '', hero_url, hero_source, accepted=False,
+                reason='exact_seen' + (f';near={near}' if near else ''),
+            )
+        else:
+            PROBE.hero_extracted(
+                url or '', None, None, accepted=False, reason='not_found',
+            )
 
         # Find and process article body
-        article_body = self._find_article_body(soup)
+        article_body, body_selector = self._find_article_body(soup)
+        self._log_body_scope(soup, article_body, body_selector, url or '')
 
-        for element in article_body.find_all(['p', 'figure', 'body-text']):
+        for element in self._iter_content_elements(article_body):
             if element.name == 'body-text':
                 if element.find_parent('figcaption'):
                     continue
@@ -77,8 +101,16 @@ class ContentExtractor:
             elif element.name == 'p':
                 self._process_paragraph(element, article)
             elif element.name == 'figure':
-                self._process_figure(element, article, url)
+                self._process_figure(
+                    element, article, url, article_body=article_body,
+                )
 
+        PROBE.article_summary(
+            url or '',
+            article.title,
+            article.image_count,
+            article.paragraph_count,
+        )
         return article
 
     def extract_cover_url(self, html: str) -> Optional[str]:
@@ -202,8 +234,15 @@ class ContentExtractor:
 
         return None
 
-    def _extract_hero_image(self, html: str) -> Optional[str]:
-        """Extract hero/banner image URL from article HTML."""
+    def _extract_hero_image(
+        self, html: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Extract hero/banner image URL from article HTML.
+
+        Returns:
+            (url, source) where source is 'preload', 'video_poster',
+            'og:image', or None.
+        """
         soup = BeautifulSoup(html, 'html.parser')
 
         # Try preload link first
@@ -224,7 +263,16 @@ class ContentExtractor:
                             filename = hero_url.split('/')[-1][:40]
                             print(f"    Found hero image: {resolution}w - "
                                   f"{filename}...")
-                        return hero_url
+                        return hero_url, 'preload'
+
+        # Interactive articles often use a hero <video poster="...">
+        for video in soup.find_all('video'):
+            poster = video.get('poster')
+            if poster and self._is_valid_hero_image(poster):
+                if self.debug:
+                    print(f"    Found hero from video poster: "
+                          f"{poster.split('/')[-1][:40]}...")
+                return poster, 'video_poster'
 
         # Fallback to meta og:image
         og_image = soup.find('meta', {'property': 'og:image'})
@@ -234,9 +282,9 @@ class ContentExtractor:
                 if self.debug:
                     print(f"    Found hero from og:image: "
                           f"{content.split('/')[-1][:40]}...")
-                return content
+                return content, 'og:image'
 
-        return None
+        return None, None
 
     def _is_valid_hero_image(self, url: str) -> bool:
         """Check if URL is a valid hero image."""
@@ -246,26 +294,156 @@ class ContentExtractor:
             return False
         return True
 
-    def _find_article_body(self, soup: BeautifulSoup) -> BeautifulSoup:
-        """Find the main article body container."""
+    def _find_article_body(
+        self, soup: BeautifulSoup
+    ) -> Tuple[BeautifulSoup, str]:
+        """Find the main article body container.
+
+        Returns:
+            (body_element, selector_label)
+        """
         selectors = [
-            {'name': 'div', 'attrs': {'data-component': 'article-body'}},
-            {'name': 'div', 'attrs': {'itemprop': 'articleBody'}},
-            {'name': 'section',
-             'attrs': {'class': re.compile('ei2yr3n0')}},
-            {'name': 'main', 'attrs': {'id': 'content'}},
-            {'name': 'main', 'attrs': {'role': 'main'}}
+            ('data-component=article-body',
+             {'name': 'div', 'attrs': {'data-component': 'article-body'}}),
+            ('itemprop=articleBody',
+             {'name': 'div', 'attrs': {'itemprop': 'articleBody'}}),
+            ('article#new-article-template',
+             {'name': 'article', 'attrs': {'id': 'new-article-template'}}),
+            ('article',
+             {'name': 'article', 'attrs': {}}),
+            ('section.ei2yr3n0',
+             {'name': 'section',
+              'attrs': {'class': re.compile('ei2yr3n0')}}),
+            ('main#content',
+             {'name': 'main', 'attrs': {'id': 'content'}}),
+            ('main[role=main]',
+             {'name': 'main', 'attrs': {'role': 'main'}}),
         ]
 
-        for selector in selectors:
+        for label, selector in selectors:
             article_body = soup.find(
                 selector['name'],
                 selector.get('attrs', {})
             )
             if article_body:
-                return article_body
+                return article_body, label
 
-        return soup
+        return soup, 'soup'
+
+    def _iter_content_elements(self, article_body):
+        """Yield article content nodes, stopping at related-article chrome.
+
+        Economist pages append a "More from <Section>" block inside <article>
+        whose figures are other articles' heroes. Stop before that block.
+        """
+        for element in article_body.find_all(
+            ['p', 'figure', 'body-text', 'h2']
+        ):
+            if element.name == 'h2':
+                heading = element.get_text(' ', strip=True).lower()
+                if heading.startswith('more from'):
+                    PROBE.log(
+                        'content_truncated',
+                        hypothesis=['H1', 'H6'],
+                        reason='more_from_heading',
+                        heading=element.get_text(' ', strip=True),
+                    )
+                    return
+                continue
+            yield element
+
+    def _log_body_scope(
+        self,
+        soup: BeautifulSoup,
+        article_body,
+        body_selector: str,
+        url: str,
+    ) -> None:
+        """Log figure counts inside body vs whole main (H1/H6)."""
+        main = soup.find('main', id='content') or soup.find('main') or soup
+        body_figures = article_body.find_all('figure')
+        main_figures = main.find_all('figure')
+        body_ids = {id(f) for f in body_figures}
+        outside = []
+        for fig in main_figures:
+            if id(fig) in body_ids:
+                continue
+            src = self._figure_src(fig)
+            outside.append({
+                'src': src,
+                'asset': asset_key(src),
+                'parent_hint': self._figure_parent_hint(fig),
+                'caption': (fig.find('figcaption').get_text(' ', strip=True)
+                            if fig.find('figcaption') else None),
+            })
+
+        more_from = None
+        for h2 in article_body.find_all('h2'):
+            if h2.get_text(' ', strip=True).lower().startswith('more from'):
+                more_from = h2
+                break
+        after_more = []
+        if more_from is not None:
+            descendants = list(article_body.descendants)
+            try:
+                more_i = descendants.index(more_from)
+            except ValueError:
+                more_i = None
+            if more_i is not None:
+                for fig in body_figures:
+                    try:
+                        fi = descendants.index(fig)
+                    except ValueError:
+                        continue
+                    if fi > more_i:
+                        src = self._figure_src(fig)
+                        after_more.append({
+                            'src': src,
+                            'asset': asset_key(src),
+                        })
+
+        PROBE.body_scope(
+            url,
+            body_selector,
+            figures_in_body=len(body_figures),
+            figures_in_main=len(main_figures),
+            figures_outside_body=outside,
+        )
+        PROBE.log(
+            'more_from_figures',
+            hypothesis=['H1', 'H6'],
+            url=url,
+            selector=body_selector,
+            more_from_present=more_from is not None,
+            figures_after_more_from=after_more,
+            h1_suspect=len(after_more) > 0,
+        )
+
+    def _figure_src(self, element) -> Optional[str]:
+        """Get image URL from a figure (img src or video poster)."""
+        img = element.find('img')
+        if img and img.get('src'):
+            return img.get('src')
+        video = element.find('video')
+        if video and video.get('poster'):
+            return video.get('poster')
+        return None
+
+    def _figure_parent_hint(self, element) -> str:
+        """Summarize parent context for a figure element."""
+        bits = []
+        for parent in element.parents:
+            if parent.name in (None, '[document]'):
+                break
+            dc = parent.get('data-component') if hasattr(parent, 'get') else None
+            if dc:
+                bits.append(f'comp={dc}')
+            pid = parent.get('id') if hasattr(parent, 'get') else None
+            if pid:
+                bits.append(f'id={pid}')
+            if len(bits) >= 4:
+                break
+        return '>'.join(bits) if bits else element.name or 'unknown'
 
     def _process_paragraph(self, element, article: Article) -> None:
         """Process and add paragraph element to article content."""
@@ -362,32 +540,62 @@ class ContentExtractor:
         article.add_paragraph(inner_html)
 
     def _process_figure(self, element, article: Article,
-                        page_url: Optional[str] = None) -> None:
+                        page_url: Optional[str] = None,
+                        article_body=None) -> None:
         """Process and add figure element to article content."""
-        img = element.find('img')
-        if not img or not img.get('src'):
+        src = self._figure_src(element)
+        if not src:
             return
 
-        src = img.get('src')
         if src and not src.startswith('http'):
             base = page_url or 'https://www.economist.com'
             src = urljoin(base, src)
 
+        caption_text, credit_text = self._extract_caption_credit(element)
+        parent_hint = self._figure_parent_hint(element)
+        inside_body = True
+        if article_body is not None:
+            inside_body = any(
+                p is article_body for p in element.parents
+            ) or element is article_body
+        paragraph_index_before = article.paragraph_count
+        block_index = len(article.content_blocks)
+        near = PROBE.near_dupe_lookup(src, self.seen_image_urls)
+        exact_seen = src in self.seen_image_urls
+
         # Skip malicious URLs
         if any(pattern in src.lower() for pattern in
                ['javascript:', 'data:', 'vbscript:']):
+            PROBE.figure_candidate(
+                page_url or '', src, accepted=False, reason='malicious',
+                caption=caption_text, parent_hint=parent_hint,
+                inside_article_body=inside_body, block_index=block_index,
+                paragraph_index_before=paragraph_index_before,
+                near_dupe_of=near, exact_seen=exact_seen,
+            )
             return
 
         # Skip invalid images
         if any(pattern in src for pattern in
                COVER_PATTERNS + IMAGE_SKIP_PATTERNS):
+            PROBE.figure_candidate(
+                page_url or '', src, accepted=False, reason='skip_pattern',
+                caption=caption_text, parent_hint=parent_hint,
+                inside_article_body=inside_body, block_index=block_index,
+                paragraph_index_before=paragraph_index_before,
+                near_dupe_of=near, exact_seen=exact_seen,
+            )
             return
 
-        if src in self.seen_image_urls:
+        if exact_seen:
+            PROBE.figure_candidate(
+                page_url or '', src, accepted=False, reason='exact_seen',
+                caption=caption_text, parent_hint=parent_hint,
+                inside_article_body=inside_body, block_index=block_index,
+                paragraph_index_before=paragraph_index_before,
+                near_dupe_of=near, exact_seen=True,
+            )
             return
-
-        # Extract caption and credit
-        caption_text, credit_text = self._extract_caption_credit(element)
 
         article.add_image(
             src=src,
@@ -395,6 +603,14 @@ class ContentExtractor:
             credit=credit_text
         )
         self.seen_image_urls.add(src)
+        PROBE.figure_candidate(
+            page_url or '', src, accepted=True,
+            reason='near_dupe' if near else 'ok',
+            caption=caption_text, parent_hint=parent_hint,
+            inside_article_body=inside_body, block_index=block_index,
+            paragraph_index_before=paragraph_index_before,
+            near_dupe_of=near, exact_seen=False,
+        )
 
     def _extract_caption_credit(
         self, element

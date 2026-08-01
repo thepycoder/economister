@@ -198,16 +198,27 @@ class EconomistScraper:
             print(f"  ✗ Error: {e}")
             return False
 
-    def scrape_articles(self, limit: Optional[int] = None) -> List[Article]:
+    def scrape_articles(
+        self,
+        limit: Optional[int] = None,
+        until_section: Optional[str] = None,
+    ) -> List[Article]:
         """Scrape multiple articles with optional limit.
 
         Args:
             limit: Maximum number of articles to scrape.
+            until_section: If set, scrape through this section (inclusive)
+                in edition order, then stop.
 
         Returns:
             List of successfully scraped articles.
         """
         articles = self.edition.articles
+
+        if until_section:
+            articles = self._articles_until_section(articles, until_section)
+            print(f"\n📎 Scraping through section '{until_section}' "
+                  f"({len(articles)} articles)")
 
         if limit and limit > 0:
             original_count = len(articles)
@@ -229,6 +240,31 @@ class EconomistScraper:
                 time.sleep(ARTICLE_FETCH_COOLDOWN)
 
         return successful_articles
+
+    def _articles_until_section(
+        self, articles: List[Article], until_section: str
+    ) -> List[Article]:
+        """Return articles from start through until_section inclusive."""
+        target = until_section.strip().lower()
+        section_order: List[str] = []
+        for article in articles:
+            section = article.section or 'Unknown'
+            if section not in section_order:
+                section_order.append(section)
+
+        matched = next(
+            (s for s in section_order if s.lower() == target),
+            None,
+        )
+        if matched is None:
+            available = ', '.join(section_order)
+            raise ValueError(
+                f"Section '{until_section}' not found. Available: {available}"
+            )
+
+        cutoff_index = section_order.index(matched)
+        allowed = set(section_order[:cutoff_index + 1])
+        return [a for a in articles if (a.section or 'Unknown') in allowed]
 
     def cleanup(self) -> None:
         """Clean up resources."""

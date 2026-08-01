@@ -12,6 +12,7 @@ from config import (
 from models import Article, Edition
 from utils import parse_edition_date
 from image_handler import ImageHandler
+from hypothesis_log import PROBE
 
 
 class EpubBuilder:
@@ -194,7 +195,7 @@ class EpubBuilder:
 
         images_added = 0
 
-        for block in article.content_blocks:
+        for block_index, block in enumerate(article.content_blocks):
             if block.type == 'paragraph' and block.content:
                 html_content.append(f'<p>{block.content}</p>')
 
@@ -221,6 +222,15 @@ class EpubBuilder:
                         block.image.is_hero or images_added == 0
                     )
                     html_content.append(figure_html)
+                    PROBE.epub_image_added(
+                        article_url=article.url or '',
+                        article_title=article.title,
+                        chapter_file=f'(pending index)',
+                        src_url=block.image.src,
+                        epub_filename=filename,
+                        block_index=block_index,
+                        is_hero=bool(block.image.is_hero),
+                    )
                     images_added += 1
 
         return '\n'.join(html_content) if html_content else None

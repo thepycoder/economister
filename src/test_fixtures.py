@@ -74,6 +74,72 @@ MOCK_ARTICLE_INTERACTIVE_HTML = """
 </html>
 """
 
+# Article layout matching current Economist pages: article template +
+# "More from Leaders" related cards whose figures are other heroes.
+MOCK_ARTICLE_MORE_FROM_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Post-quantum encryption</title>
+    <link rel="preload" as="image" imagesrcset="https://www.economist.com/cdn-cgi/image/width=1424,quality=80,format=auto/content-assets/images/20260801_LDP503.jpg 1424w">
+</head>
+<body>
+    <main id="content">
+        <article id="new-article-template">
+            <h1>It is past time to upgrade to post-quantum encryption</h1>
+            <h2 class="e6h2z500">When the quantum breakthrough comes</h2>
+            <figure>
+                <img src="https://www.economist.com/cdn-cgi/image/width=1424,quality=80,format=auto/content-assets/images/20260801_LDP503.jpg"/>
+                <figcaption>Photograph: Quantinuum</figcaption>
+            </figure>
+            <p class="e1y9q0ei" data-component="paragraph">
+                Quantum computers exploit the weird physics of quantum mechanics to perform
+                some types of calculations at breathtaking speed. Jobs that would take ordinary
+                classical computers billions of years might be polished off in just a few hours.
+            </p>
+            <p class="e1y9q0ei" data-component="paragraph">
+                The good news is that a fix already exists. Post-quantum cryptography is based
+                on maths that does not seem to be vulnerable to quantum computers today.
+            </p>
+            <h2>More from Leaders</h2>
+            <figure>
+                <img src="https://www.economist.com/cdn-cgi/image/width=1424,quality=80,format=auto/content-assets/images/20260801_LDP504.jpg"/>
+            </figure>
+            <figure>
+                <img src="https://www.economist.com/cdn-cgi/image/width=1424,quality=80,format=auto/content-assets/images/20260801_LDP505.jpg"/>
+            </figure>
+        </article>
+    </main>
+</body>
+</html>
+"""
+
+# Interactive leader with video poster hero (Big Mac style)
+MOCK_ARTICLE_VIDEO_POSTER_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Big Mac index</title>
+    <meta property="og:image" content="https://www.economist.com/interactive/leaders/sample/promo.jpg">
+</head>
+<body>
+    <main id="content" class="no-chrome">
+        <h1>What the Big Mac index reveals</h1>
+        <figure>
+            <video poster="https://cdn.economistdatateam.com/videos/graphics/leader_bigmac_1920.jpg"></video>
+        </figure>
+        <div class="article-text">
+            <body-text>
+                Locked in a vault near Paris sits a small cylinder of platinum alloy.
+                There is no universal standard for measuring currencies. But The Economist
+                has a favourite candidate under two Golden Arches.
+            </body-text>
+        </div>
+    </main>
+</body>
+</html>
+"""
+
 # Mock article HTML - Steve Jobs Stanford speech themed
 MOCK_ARTICLE_JOBS_HTML = """
 <!DOCTYPE html>
