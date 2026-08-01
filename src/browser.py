@@ -20,6 +20,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from config import (
   ECONOMIST_EMAIL,
   ECONOMIST_PASSWORD,
+  HEADLESS,
   LOGIN_URL,
   PAGE_LOAD_WAIT_TIME,
   USER_AGENT,
@@ -423,17 +424,29 @@ class BrowserManager:
   def __init__(self):
     """Initialize browser manager."""
     self.driver: Optional[WebDriver] = None
+    self._headless = HEADLESS
     atexit.register(self.quit)
 
-  def setup(self) -> None:
+  def setup(self, headless: Optional[bool] = None) -> None:
     """Initialize Selenium Chrome driver with anti-detection options.
+
+    Args:
+        headless: Override HEADLESS env setting for this launch.
 
     Raises:
         RuntimeError: If Chrome or ChromeDriver is not installed.
     """
-    print("Starting Chrome browser...")
+    use_headless = HEADLESS if headless is None else headless
+    mode = "headless" if use_headless else "headed"
+    print(f"Starting Chrome browser ({mode})...")
     try:
       options = webdriver.ChromeOptions()
+      if use_headless:
+        options.add_argument("--headless=new")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
       options.add_argument("--disable-blink-features=AutomationControlled")
       options.add_experimental_option("excludeSwitches", ["enable-logging"])
       options.add_experimental_option(
@@ -441,6 +454,7 @@ class BrowserManager:
         {"profile.default_content_setting_values.notifications": 2},
       )
       self.driver = webdriver.Chrome(options=options)
+      self._headless = use_headless
     except Exception as e:
       raise RuntimeError(
         f"Failed to start Chrome browser. Ensure Chrome and ChromeDriver "
@@ -457,11 +471,12 @@ class BrowserManager:
     except WebDriverException:
       return False
 
-  def _restart_browser(self) -> None:
-    """Restart Chrome after a tab crash."""
-    print("Restarting browser after tab crash...")
+  def _restart_browser(self, headless: Optional[bool] = None) -> None:
+    """Restart Chrome after a tab crash or mode switch."""
+    mode = "headless" if (HEADLESS if headless is None else headless) else "headed"
+    print(f"Restarting browser ({mode})...")
     self.quit()
-    self.setup()
+    self.setup(headless=headless)
 
   def export_requests_session(self) -> requests.Session:
     """Copy authenticated browser cookies into a requests session."""
@@ -505,7 +520,11 @@ class BrowserManager:
       print("Automated login failed, falling back to manual login...")
 
     if not self._is_browser_healthy():
-      self._restart_browser()
+      # Manual login needs a visible window.
+      self._restart_browser(headless=False)
+    elif self._headless:
+      print("Switching to headed Chrome for manual login...")
+      self._restart_browser(headless=False)
 
     self._login_manual()
 

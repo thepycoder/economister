@@ -39,6 +39,7 @@ class TestBrowserHelpers(unittest.TestCase):
   def test_dismiss_cookie_banner_clicks_accept(self):
     """Test cookie banner dismissal clicks the accept button."""
     driver = Mock()
+    driver.current_url = "https://www.economist.com/"
     button = Mock()
     button.is_displayed.return_value = True
     button.is_enabled.return_value = True
@@ -52,6 +53,7 @@ class TestBrowserHelpers(unittest.TestCase):
   def test_dismiss_cookie_banner_no_banner(self):
     """Test cookie banner dismissal when no banner is present."""
     driver = Mock()
+    driver.current_url = "https://www.economist.com/"
     driver.find_elements.return_value = []
     with patch("browser._dismiss_onetrust_banner", return_value=False), patch(
       "browser._dismiss_sourcepoint_consent", return_value=False
@@ -161,9 +163,10 @@ class TestBrowserManager(unittest.TestCase):
       except:
         pass
 
+  @patch("browser.HEADLESS", True)
   @patch("browser.webdriver.Chrome")
-  def test_setup_success(self, mock_chrome):
-    """Test successful browser setup."""
+  def test_setup_success(self, mock_chrome, *_headless):
+    """Test successful browser setup defaults to headless."""
     mock_driver = Mock()
     mock_chrome.return_value = mock_driver
 
@@ -171,11 +174,23 @@ class TestBrowserManager(unittest.TestCase):
 
     mock_chrome.assert_called_once()
     self.assertEqual(self.browser.driver, mock_driver)
+    self.assertTrue(self.browser._headless)
 
-    # Check Chrome options were set
-    call_args = mock_chrome.call_args
-    options = call_args[1]["options"]
-    self.assertIsNotNone(options)
+    options = mock_chrome.call_args[1]["options"]
+    self.assertIn("--headless=new", options.arguments)
+
+  @patch("browser.HEADLESS", False)
+  @patch("browser.webdriver.Chrome")
+  def test_setup_headed_when_disabled(self, mock_chrome, *_headless):
+    """Test headed Chrome when HEADLESS=false."""
+    mock_driver = Mock()
+    mock_chrome.return_value = mock_driver
+
+    self.browser.setup()
+
+    options = mock_chrome.call_args[1]["options"]
+    self.assertNotIn("--headless=new", options.arguments)
+    self.assertFalse(self.browser._headless)
 
   @patch("browser.webdriver.Chrome")
   def test_setup_failure(self, mock_chrome):
@@ -212,7 +227,7 @@ class TestBrowserManager(unittest.TestCase):
     ) as mock_manual:
       browser.login()
 
-    mock_restart.assert_called_once()
+    mock_restart.assert_called_once_with(headless=False)
     mock_manual.assert_called_once()
 
   @patch("browser.webdriver.Chrome")
@@ -236,13 +251,14 @@ class TestBrowserManager(unittest.TestCase):
     self.assertEqual(session.cookies.get("session"), "abc123")
     self.assertIn("Mozilla", session.headers["User-Agent"])
 
+  @patch("browser.HEADLESS", True)
   @patch("browser.ECONOMIST_EMAIL", "")
   @patch("browser.ECONOMIST_PASSWORD", "")
   @patch("browser.input", return_value="")
   @patch("browser.dismiss_cookie_banner", return_value=False)
   @patch("browser.webdriver.Chrome")
   def test_login_manual_fallback(
-    self, mock_chrome, mock_dismiss, mock_input, *_credentials
+    self, mock_chrome, mock_dismiss, mock_input, *_patches
   ):
     """Test manual login flow when credentials are absent."""
     mock_driver = Mock()
@@ -251,17 +267,21 @@ class TestBrowserManager(unittest.TestCase):
     self.browser.setup()
     self.browser.login()
 
+    # Headless → headed restart for manual login, then navigate.
+    self.assertGreaterEqual(mock_chrome.call_count, 2)
     mock_driver.get.assert_called_with(
       "https://www.economist.com/api/auth/login"
     )
     mock_input.assert_called_once()
+    self.assertFalse(self.browser._headless)
 
+  @patch("browser.HEADLESS", True)
   @patch("browser.ECONOMIST_PASSWORD", "secret")
   @patch("browser.ECONOMIST_EMAIL", "user@example.com")
   @patch("browser.login_automated", return_value=True)
   @patch("browser.webdriver.Chrome")
   def test_login_automated_when_credentials_present(
-    self, mock_chrome, mock_auto_login, *_credentials
+    self, mock_chrome, mock_auto_login, *_patches
   ):
     """Test automated login is used when .env credentials exist."""
     mock_driver = Mock()
@@ -273,7 +293,9 @@ class TestBrowserManager(unittest.TestCase):
     mock_auto_login.assert_called_once_with(
       mock_driver, "user@example.com", "secret"
     )
+    self.assertTrue(self.browser._headless)
 
+  @patch("browser.HEADLESS", True)
   @patch("browser.ECONOMIST_PASSWORD", "secret")
   @patch("browser.ECONOMIST_EMAIL", "user@example.com")
   @patch("browser.input", return_value="")
@@ -286,7 +308,7 @@ class TestBrowserManager(unittest.TestCase):
     mock_auto_login,
     mock_dismiss,
     mock_input,
-    *_credentials,
+    *_patches,
   ):
     """Test manual login fallback when automation fails."""
     mock_driver = Mock()
@@ -297,6 +319,7 @@ class TestBrowserManager(unittest.TestCase):
 
     mock_auto_login.assert_called_once()
     mock_input.assert_called_once()
+    self.assertFalse(self.browser._headless)
 
   def test_login_without_setup(self):
     """Test login without browser setup."""

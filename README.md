@@ -19,8 +19,8 @@
 
 Economister opens Chrome, logs in to The Economist, then downloads and converts the entire weekly edition. With credentials in a `.env` file, login is fully automated; otherwise you log in manually in the browser.
 
-1. **Chrome Opens** → A Chrome browser window appears
-2. **Login** → Automated from `.env`, or manual (handle any CAPTCHAs/2FA)
+1. **Chrome Starts** → Headless by default (`HEADLESS=false` for a visible window)
+2. **Login** → Automated from `.env`, or manual headed fallback (CAPTCHAs/2FA)
 3. **Tool Takes Over** → Downloads all articles and creates EPUB
 4. **EPUB Ready** → Find your file in `ebooks/economist_YYYY-MM-DD.epub`
 
@@ -73,9 +73,12 @@ Set your Economist subscription email and password:
 ```env
 ECONOMIST_EMAIL=your-email@example.com
 ECONOMIST_PASSWORD=your-password
+
+# Chrome runs headlessly by default. Set false for a visible window.
+HEADLESS=true
 ```
 
-When both variables are set, `main.py` and `scripts/audit_wtw.py` log in automatically. If automation fails (CAPTCHA, 2FA, etc.), the tool falls back to manual login in the browser.
+When both credential variables are set, `main.py` and `scripts/audit_wtw.py` log in automatically (headless by default). If automation fails (CAPTCHA, 2FA, etc.), the tool switches to a headed browser for manual login.
 
 Without a `.env` file, run as before: log in manually when prompted and press Enter to continue.
 
@@ -158,9 +161,9 @@ google-chrome --version  # or chrome --version
 
 ## Login
 
-The Economist uses bot detection (CAPTCHAs, behavior analysis, browser fingerprinting). **Recommended:** put credentials in `.env` for automated login via the Salesforce account page.
+The Economist uses bot detection (CAPTCHAs, behavior analysis, browser fingerprinting). **Recommended:** put credentials in `.env` for automated login via the Salesforce account page. Chrome runs headlessly by default (`HEADLESS=true`); set `HEADLESS=false` if you need a visible window.
 
-If automation is blocked or you use 2FA, the tool falls back to manual login in Chrome — you complete authentication in the browser, then press Enter to continue.
+If automation is blocked or you use 2FA, the tool falls back to manual login in headed Chrome — you complete authentication in the browser, then press Enter to continue.
 
 ## Legal
 

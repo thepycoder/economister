@@ -12,6 +12,18 @@ load_dotenv(PROJECT_ROOT / ".env")
 ECONOMIST_EMAIL = os.getenv("ECONOMIST_EMAIL", "").strip()
 ECONOMIST_PASSWORD = os.getenv("ECONOMIST_PASSWORD", "").strip()
 
+
+def _env_bool(name: str, default: bool) -> bool:
+  """Parse a boolean environment variable."""
+  raw = os.getenv(name)
+  if raw is None or not raw.strip():
+    return default
+  return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Run Chrome headlessly for automated login (set HEADLESS=false for a visible window).
+HEADLESS = _env_bool("HEADLESS", True)
+
 # URLs
 # IMPORTANT: This URL always points to the CURRENT weekly edition only.
 # The tool intentionally does not support targeting specific past editions
