@@ -3,13 +3,12 @@
 import time
 from typing import List, Optional
 
-import requests
-from requests.cookies import create_cookie
+from selenium.common.exceptions import WebDriverException
 
 from config import (
     ARTICLE_FETCH_COOLDOWN,
+    ARTICLE_LOAD_WAIT_TIME,
     ECONOMIST_URL,
-    USER_AGENT,
 )
 from models import Article, Edition
 from utils import (
@@ -17,7 +16,7 @@ from utils import (
     extract_date_from_cover_url, extract_date_from_text,
     has_extractable_content, save_debug_html,
 )
-from browser import BrowserManager
+from browser import BrowserManager, is_cloudflare_challenge
 from content_extractor import ContentExtractor
 
 
@@ -34,43 +33,34 @@ class EconomistScraper:
         self.browser = BrowserManager()
         self.extractor = ContentExtractor(debug=debug)
         self.edition = Edition()
-        self.session: Optional[requests.Session] = None
 
     def initialize(self) -> None:
-        """Initialize browser, authenticate, and switch to HTTP session."""
+        """Start Chrome, log in, and keep the browser for page fetches."""
         self.browser.setup()
         self.browser.login()
-        self._refresh_session()
-        self.browser.quit()
-        print("Using authenticated HTTP session for scraping")
-
-    def _refresh_session(self) -> None:
-        """Export browser cookies into a requests session."""
-        self.session = self.browser.export_requests_session()
-
+        print("Using headless Chrome for scraping")
     def _recover_session(self) -> bool:
-        """Restart browser login after session or tab failure."""
-        print("  Recovering authenticated session...")
+        """Restart browser login after a tab crash or block."""
+        print("  Recovering authenticated Chrome session...")
         try:
             self.browser.setup()
             self.browser.login()
-            self._refresh_session()
-            self.browser.quit()
             return True
         except Exception as exc:
             print(f"  Session recovery failed: {exc}")
             return False
 
-    def _is_auth_failure(self, response: requests.Response) -> bool:
-        """Return True when the response indicates an expired login."""
-        if response.status_code in (401, 403):
+    def _html_is_blocked(self, html: str) -> bool:
+        """Return True when HTML is a Cloudflare wall or login paywall."""
+        title = ""
+        if self.browser.driver:
+            try:
+                title = self.browser.driver.title or ""
+            except WebDriverException:
+                title = ""
+        if is_cloudflare_challenge(title, html):
             return True
-
-        final_url = response.url.lower()
-        if "/api/auth/login" in final_url or "myaccount.economist.com" in final_url:
-            return True
-
-        snippet = response.text[:8000].lower()
+        snippet = (html or "")[:8000].lower()
         paywall_markers = (
             "already have an account?",
             "continue with a free trial",
@@ -80,43 +70,37 @@ class EconomistScraper:
         return any(marker in snippet for marker in paywall_markers)
 
     def _fetch_page(self, url: str, wait_time: int = 0) -> str:
-        """Fetch a page using the authenticated HTTP session."""
-        if not self.session:
-            self._recover_session()
+        """Fetch a page with the authenticated Chrome session."""
+        if not self.browser.driver:
+            if not self._recover_session():
+                raise RuntimeError("Browser not initialized")
 
-        headers = {"User-Agent": USER_AGENT}
         recovered = False
-        last_response: Optional[requests.Response] = None
+        last_error: Optional[Exception] = None
+        settle = wait_time if wait_time else ARTICLE_LOAD_WAIT_TIME
 
-        for attempt in range(4):
+        for _attempt in range(3):
             try:
-                response = self.session.get(url, timeout=30, headers=headers)
-            except (requests.Timeout, requests.ConnectionError):
-                if attempt < 3:
-                    time.sleep(min(2 ** attempt, 8))
-                    continue
-                raise
-
-            last_response = response
-
-            if response.status_code in (429, 502, 503, 504) and attempt < 3:
-                time.sleep(min(2 ** attempt, 8))
-                continue
-
-            if self._is_auth_failure(response):
+                html = self.browser.navigate(url, wait_time=settle)
+            except (WebDriverException, RuntimeError) as exc:
+                last_error = exc
                 if not recovered and self._recover_session():
                     recovered = True
                     continue
-                response.raise_for_status()
+                raise
 
-            response.raise_for_status()
-            if wait_time:
-                time.sleep(wait_time)
-            return response.text
+            if self._html_is_blocked(html):
+                if not recovered and self._recover_session():
+                    recovered = True
+                    continue
+                raise RuntimeError(
+                    f"Cloudflare or login wall still present for {url}"
+                )
+            return html
 
-        if last_response is not None:
-            last_response.raise_for_status()
-        raise requests.RequestException(f"Failed to fetch {url}")
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"Failed to fetch {url}")
 
     def scrape_weekly_edition(self) -> Edition:
         """Scrape the weekly edition page for article links.

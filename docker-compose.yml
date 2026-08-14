@@ -1,0 +1,46 @@
+# UGREEN NAS / Portainer stack.
+#
+# Before deploy:
+#   1. Set ECONOMIST_EMAIL and ECONOMIST_PASSWORD.
+#   2. Change the volume host path to your share
+#      (UGOS Pro: /media/<share-name>/economist).
+#   3. Allow the Docker socket mount for Ofelia.
+#
+# The Economist digital edition usually appears ~21:00 UK time on Thursday.
+# Ofelia starts the job at 22:00 Europe/London every Thursday.
+# The first `compose up` also runs one scrape immediately, then the
+# economister container exits. Ofelia stays up and starts it again weekly.
+
+services:
+  economister:
+    image: ghcr.io/thepycoder/economister:latest
+    container_name: economister
+    restart: "no"
+    init: true
+    shm_size: "2gb"
+    mem_limit: 2g
+    environment:
+      TZ: Europe/London
+      HEADLESS: "true"
+      ECONOMISTER_NONINTERACTIVE: "true"
+      ECONOMIST_EMAIL: "your-email@example.com"
+      ECONOMIST_PASSWORD: "your-password"
+    volumes:
+      - /media/YOUR_SHARE/economist:/app/ebooks
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    container_name: economister-scheduler
+    restart: unless-stopped
+    depends_on:
+      - economister
+    command: daemon --docker
+    environment:
+      TZ: Europe/London
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      # 6-field cron (seconds first) for ofelia:latest.
+      ofelia.job-run.economist-weekly.schedule: "0 0 22 * * 4"
+      ofelia.job-run.economist-weekly.container: "economister"
+      ofelia.job-run.economist-weekly.no-overlap: "true"

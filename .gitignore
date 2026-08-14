@@ -16,6 +16,7 @@ ebooks/
 temp/
 debug/
 log/
+logs/
 *.epub
 *.md
 !README.md

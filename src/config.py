@@ -24,6 +24,9 @@ def _env_bool(name: str, default: bool) -> bool:
 # Run Chrome headlessly for automated login (set HEADLESS=false for a visible window).
 HEADLESS = _env_bool("HEADLESS", True)
 
+# Docker/NAS runs have no display or keyboard. Fail instead of waiting for input().
+NONINTERACTIVE = _env_bool("ECONOMISTER_NONINTERACTIVE", False)
+
 # URLs
 # IMPORTANT: This URL always points to the CURRENT weekly edition only.
 # The tool intentionally does not support targeting specific past editions
@@ -74,9 +77,11 @@ OUTPUT_DIR = "ebooks"
 DEBUG_DIR = "debug"
 LOGS_DIR = "logs"
 
-# User agent for requests
+# User agent for Chrome and image downloads. Must not contain "HeadlessChrome";
+# Cloudflare challenges www.economist.com when the default headless UA is used.
 USER_AGENT = (
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 # Month names mapping

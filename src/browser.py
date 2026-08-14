@@ -22,6 +22,7 @@ from config import (
   ECONOMIST_PASSWORD,
   HEADLESS,
   LOGIN_URL,
+  NONINTERACTIVE,
   PAGE_LOAD_WAIT_TIME,
   USER_AGENT,
 )
@@ -418,6 +419,42 @@ def login_automated(
   return False
 
 
+def is_cloudflare_challenge(title: str, html: str) -> bool:
+  """Return True when the page is a Cloudflare bot interstitial."""
+  lowered_title = str(title or "").strip().lower()
+  if lowered_title.startswith("just a moment") or "attention required" in (
+    lowered_title
+  ):
+    return True
+  head = str(html or "")[:8000].lower()
+  markers = (
+    "cdn-cgi/challenge",
+    "cf-browser-verification",
+    "cf-challenge",
+    "checking your browser before accessing",
+  )
+  return any(marker in head for marker in markers)
+
+
+def wait_out_cloudflare(driver: WebDriver, timeout: int = 25) -> bool:
+  """Wait until a Cloudflare challenge page is replaced by real content.
+
+  Returns:
+      True if the challenge cleared (or was never present).
+  """
+  try:
+    WebDriverWait(driver, timeout).until(
+      lambda d: not is_cloudflare_challenge(
+        getattr(d, "title", "") or "",
+        getattr(d, "page_source", "") or "",
+      )
+    )
+    return True
+  except TimeoutException:
+    print("  Cloudflare challenge did not clear")
+    return False
+
+
 class BrowserManager:
   """Manages browser instance and authentication."""
 
@@ -447,6 +484,7 @@ class BrowserManager:
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+      options.add_argument(f"--user-agent={USER_AGENT}")
       options.add_argument("--disable-blink-features=AutomationControlled")
       options.add_experimental_option("excludeSwitches", ["enable-logging"])
       options.add_experimental_option(
@@ -484,7 +522,14 @@ class BrowserManager:
       raise RuntimeError("Browser not initialized. Call setup() first.")
 
     session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
+    user_agent = USER_AGENT
+    try:
+      detected = self.driver.execute_script("return navigator.userAgent")
+      if isinstance(detected, str) and detected.strip():
+        user_agent = detected.strip()
+    except WebDriverException:
+      pass
+    session.headers.update({"User-Agent": user_agent})
     for cookie in self.driver.get_cookies():
       expires = cookie.get("expiry")
       session.cookies.set_cookie(
@@ -518,6 +563,12 @@ class BrowserManager:
       except Exception as e:
         print(f"Automated login error: {e}")
       print("Automated login failed, falling back to manual login...")
+
+    if NONINTERACTIVE:
+      raise RuntimeError(
+        "Automated login failed or credentials are missing, and manual "
+        "login is disabled (ECONOMISTER_NONINTERACTIVE=true)."
+      )
 
     if not self._is_browser_healthy():
       # Manual login needs a visible window.
@@ -555,8 +606,10 @@ class BrowserManager:
     if not self.driver:
       raise RuntimeError("Browser not initialized. Call setup() first.")
 
-    self.driver.get(url)
+    if not _safe_navigate(self.driver, url):
+      raise RuntimeError(f"Browser tab crashed while opening {url}")
     dismiss_cookie_banner(self.driver, timeout=3)
+    wait_out_cloudflare(self.driver)
     time.sleep(wait_time)
     return self.driver.page_source
 

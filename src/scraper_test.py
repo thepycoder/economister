@@ -1,9 +1,9 @@
 """Tests for the scraper module."""
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock, ANY
+from unittest.mock import Mock, patch
 
-import requests
+from selenium.common.exceptions import WebDriverException
 from scraper import EconomistScraper
 from models import Article, Edition
 from test_fixtures import (
@@ -38,8 +38,6 @@ class TestEconomistScraper(unittest.TestCase):
     def test_initialize(self, mock_browser_class):
         """Test scraper initialization."""
         mock_browser = Mock()
-        mock_session = Mock()
-        mock_browser.export_requests_session.return_value = mock_session
         mock_browser_class.return_value = mock_browser
 
         scraper = EconomistScraper()
@@ -47,29 +45,28 @@ class TestEconomistScraper(unittest.TestCase):
 
         mock_browser.setup.assert_called_once()
         mock_browser.login.assert_called_once()
-        mock_browser.export_requests_session.assert_called_once()
-        mock_browser.quit.assert_called_once()
-        self.assertEqual(scraper.session, mock_session)
+        mock_browser.quit.assert_not_called()
+
+    def _mock_browser(self, html: str) -> Mock:
+        mock_browser = Mock()
+        mock_browser.navigate.return_value = html
+        mock_browser.driver = Mock()
+        mock_browser.driver.title = "The Economist"
+        return mock_browser
 
     @patch('scraper.save_debug_html')
     @patch('scraper.BrowserManager')
     def test_scrape_weekly_edition(self, mock_browser_class, mock_save_debug):
         """Test scraping weekly edition page."""
-        mock_session = Mock()
-        mock_session.get.return_value = self._mock_response(
-            MOCK_WEEKLY_EDITION_HTML
-        )
-        mock_browser = Mock()
-        mock_browser.export_requests_session.return_value = mock_session
+        mock_browser = self._mock_browser(MOCK_WEEKLY_EDITION_HTML)
         mock_browser_class.return_value = mock_browser
 
         scraper = EconomistScraper(debug=True)
-        scraper.session = mock_session
         edition = scraper.scrape_weekly_edition()
 
-        mock_session.get.assert_called_once()
+        mock_browser.navigate.assert_called_once()
         self.assertEqual(
-            mock_session.get.call_args[0][0],
+            mock_browser.navigate.call_args[0][0],
             "https://www.economist.com/weeklyedition",
         )
 
@@ -89,14 +86,10 @@ class TestEconomistScraper(unittest.TestCase):
     @patch('scraper.BrowserManager')
     def test_scrape_article_success(self, mock_browser_class, mock_save_debug):
         """Test successful article scraping."""
-        mock_session = Mock()
-        mock_session.get.return_value = self._mock_response(
-            MOCK_ARTICLE_JOBS_HTML
-        )
-        mock_browser_class.return_value = Mock()
+        mock_browser = self._mock_browser(MOCK_ARTICLE_JOBS_HTML)
+        mock_browser_class.return_value = mock_browser
 
         scraper = EconomistScraper(debug=True)
-        scraper.session = mock_session
         article = Article(
             title="Test Article",
             url="https://example.com/article"
@@ -106,10 +99,10 @@ class TestEconomistScraper(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertGreater(article.paragraph_count, 0)
-        mock_session.get.assert_called_once_with(
+        mock_browser.navigate.assert_called_once()
+        self.assertEqual(
+            mock_browser.navigate.call_args[0][0],
             "https://example.com/article",
-            timeout=30,
-            headers={'User-Agent': ANY},
         )
         mock_save_debug.assert_called_once()
 
@@ -119,12 +112,9 @@ class TestEconomistScraper(unittest.TestCase):
         self, mock_browser_class, mock_save_debug
     ):
         """Test cartoon articles are kept when they include the image."""
-        mock_session = Mock()
-        mock_session.get.return_value = self._mock_response(MOCK_CARTOON_HTML)
-        mock_browser_class.return_value = Mock()
+        mock_browser_class.return_value = self._mock_browser(MOCK_CARTOON_HTML)
 
         scraper = EconomistScraper(debug=True)
-        scraper.session = mock_session
         article = Article(
             title="Cartoon: Test headline",
             url=(
@@ -146,14 +136,9 @@ class TestEconomistScraper(unittest.TestCase):
         self, mock_browser_class, mock_save_debug
     ):
         """Test image-only articles such as financial indicators are kept."""
-        mock_session = Mock()
-        mock_session.get.return_value = self._mock_response(
-            MOCK_INDICATORS_HTML
-        )
-        mock_browser_class.return_value = Mock()
+        mock_browser_class.return_value = self._mock_browser(MOCK_INDICATORS_HTML)
 
         scraper = EconomistScraper(debug=True)
-        scraper.session = mock_session
         article = Article(
             title="Economic data, commodities and markets",
             url=(
@@ -182,17 +167,14 @@ class TestEconomistScraper(unittest.TestCase):
     @patch('scraper.BrowserManager')
     def test_scrape_article_too_short(self, mock_browser_class):
         """Test scraping article with no extractable content."""
-        mock_session = Mock()
-        mock_session.get.return_value = self._mock_response("""
+        mock_browser_class.return_value = self._mock_browser("""
         <html>
             <h1>Empty Article</h1>
             <div data-component="article-body"></div>
         </html>
         """)
-        mock_browser_class.return_value = Mock()
 
         scraper = EconomistScraper()
-        scraper.session = mock_session
         article = Article(url="https://example.com/short")
 
         result = scraper.scrape_article(article)
@@ -203,35 +185,15 @@ class TestEconomistScraper(unittest.TestCase):
     def test_fetch_page_recovers_only_on_auth_failure(
         self, mock_browser_class
     ):
-        """Test rate limits retry without re-login, auth errors recover once."""
-        mock_session = Mock()
-        paywall = Mock()
-        paywall.status_code = 200
-        paywall.url = "https://www.economist.com/article"
-        paywall.text = "<html>Already have an account? Log in</html>"
-        paywall.raise_for_status = Mock()
-
-        ok = Mock()
-        ok.status_code = 200
-        ok.url = "https://www.economist.com/article"
-        ok.text = "<html><h1>Article</h1></html>"
-        ok.raise_for_status = Mock()
-
-        too_many = Mock()
-        too_many.status_code = 429
-        too_many.url = "https://www.economist.com/article"
-        too_many.text = ""
-        too_many.raise_for_status = Mock(
-            side_effect=requests.HTTPError(response=too_many)
-        )
-
-        mock_session.get.side_effect = [paywall, ok]
-        mock_browser = Mock()
-        mock_browser.export_requests_session.return_value = mock_session
+        """Test paywall HTML triggers one Chrome re-login; crashes recover too."""
+        mock_browser = self._mock_browser("<html><h1>Article</h1></html>")
+        mock_browser.navigate.side_effect = [
+            "<html>Already have an account? Log in</html>",
+            "<html><h1>Article</h1></html>",
+        ]
         mock_browser_class.return_value = mock_browser
 
         scraper = EconomistScraper()
-        scraper.session = mock_session
 
         with patch.object(scraper, '_recover_session', return_value=True) as recover:
             html = scraper._fetch_page("https://www.economist.com/article")
@@ -240,28 +202,24 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertIn("Article", html)
 
         recover.reset_mock()
-        mock_session.get.side_effect = [too_many, too_many, too_many, too_many]
-        with patch.object(scraper, '_recover_session') as recover:
-            with self.assertRaises(requests.HTTPError):
+        mock_browser.navigate.side_effect = WebDriverException("tab crashed")
+        with patch.object(scraper, '_recover_session', return_value=False) as recover:
+            with self.assertRaises(WebDriverException):
                 scraper._fetch_page("https://www.economist.com/article")
 
-        recover.assert_not_called()
+        recover.assert_called_once()
 
     @patch('scraper.BrowserManager')
     def test_scrape_article_error(self, mock_browser_class):
         """Test article scraping with error."""
-        mock_session = Mock()
-        mock_session.get.side_effect = Exception("Network error")
-        mock_browser = Mock()
-        mock_browser.export_requests_session.return_value = mock_session
+        mock_browser = self._mock_browser("")
+        mock_browser.navigate.side_effect = Exception("Network error")
         mock_browser_class.return_value = mock_browser
 
         scraper = EconomistScraper()
-        scraper.session = mock_session
         article = Article(url="https://example.com/error")
 
-        with patch.object(scraper, '_recover_session', return_value=False):
-            result = scraper.scrape_article(article)
+        result = scraper.scrape_article(article)
 
         self.assertFalse(result)
 
@@ -317,14 +275,11 @@ class TestEconomistScraper(unittest.TestCase):
         self, mock_browser_class, mock_save_debug
     ):
         """Test WTW articles are extracted in DOM order."""
-        mock_session = Mock()
-        mock_session.get.return_value = self._mock_response(
+        mock_browser_class.return_value = self._mock_browser(
             MOCK_WEEKLY_EDITION_WTW_HTML
         )
-        mock_browser_class.return_value = Mock()
 
         scraper = EconomistScraper(debug=True)
-        scraper.session = mock_session
         edition = scraper.scrape_weekly_edition()
 
         self.assertEqual(len(edition.articles), 4)

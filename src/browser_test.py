@@ -8,6 +8,7 @@ from selenium.common.exceptions import WebDriverException
 from browser import (
   BrowserManager,
   dismiss_cookie_banner,
+  is_cloudflare_challenge,
   login_automated,
   _dismiss_sourcepoint_consent,
   _is_still_authenticating,
@@ -35,6 +36,24 @@ class TestBrowserHelpers(unittest.TestCase):
     """Test OAuth complete on economist.com."""
     url = "https://www.economist.com/weeklyedition/2026/07/12"
     self.assertFalse(_is_still_authenticating(url))
+
+  def test_is_cloudflare_challenge_detects_interstitial(self):
+    """Test Cloudflare challenge title and HTML markers."""
+    self.assertTrue(
+      is_cloudflare_challenge("Just a moment...", "<html></html>")
+    )
+    self.assertTrue(
+      is_cloudflare_challenge(
+        "Weekly edition",
+        "<html>cdn-cgi/challenge-platform</html>",
+      )
+    )
+    self.assertFalse(
+      is_cloudflare_challenge(
+        "The Economist",
+        "<html><h1>Leaders</h1></html>",
+      )
+    )
 
   def test_dismiss_cookie_banner_clicks_accept(self):
     """Test cookie banner dismissal clicks the accept button."""
@@ -178,6 +197,9 @@ class TestBrowserManager(unittest.TestCase):
 
     options = mock_chrome.call_args[1]["options"]
     self.assertIn("--headless=new", options.arguments)
+    self.assertTrue(
+      any(arg.startswith("--user-agent=") for arg in options.arguments)
+    )
 
   @patch("browser.HEADLESS", False)
   @patch("browser.webdriver.Chrome")
@@ -251,6 +273,26 @@ class TestBrowserManager(unittest.TestCase):
     self.assertEqual(session.cookies.get("session"), "abc123")
     self.assertIn("Mozilla", session.headers["User-Agent"])
 
+  @patch("browser.webdriver.Chrome")
+  def test_export_requests_session_uses_browser_user_agent(self, mock_chrome):
+    """Test exported session uses the live Chrome user-agent."""
+    mock_driver = Mock()
+    mock_driver.get_cookies.return_value = []
+    mock_driver.execute_script.return_value = (
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+    mock_chrome.return_value = mock_driver
+
+    browser = BrowserManager()
+    browser.setup()
+    session = browser.export_requests_session()
+
+    self.assertEqual(
+      session.headers["User-Agent"],
+      mock_driver.execute_script.return_value,
+    )
+
   @patch("browser.HEADLESS", True)
   @patch("browser.ECONOMIST_EMAIL", "")
   @patch("browser.ECONOMIST_PASSWORD", "")
@@ -320,6 +362,27 @@ class TestBrowserManager(unittest.TestCase):
     mock_auto_login.assert_called_once()
     mock_input.assert_called_once()
     self.assertFalse(self.browser._headless)
+
+  @patch("browser.NONINTERACTIVE", True)
+  @patch("browser.HEADLESS", True)
+  @patch("browser.ECONOMIST_PASSWORD", "secret")
+  @patch("browser.ECONOMIST_EMAIL", "user@example.com")
+  @patch("browser.login_automated", return_value=False)
+  @patch("browser.webdriver.Chrome")
+  def test_login_noninteractive_skips_manual_fallback(
+    self, mock_chrome, mock_auto_login, *_patches
+  ):
+    """Test Docker/NAS runs fail instead of waiting for manual login."""
+    mock_driver = Mock()
+    mock_chrome.return_value = mock_driver
+
+    self.browser.setup()
+    with self.assertRaises(RuntimeError) as context:
+      self.browser.login()
+
+    mock_auto_login.assert_called_once()
+    self.assertIn("ECONOMISTER_NONINTERACTIVE", str(context.exception))
+    self.assertTrue(self.browser._headless)
 
   def test_login_without_setup(self):
     """Test login without browser setup."""
