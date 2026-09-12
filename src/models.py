@@ -65,6 +65,16 @@ class Article:
 
 
 @dataclass
+class ScrapeSummary:
+    """Records the completeness and recovery state of a scrape."""
+    indexed_articles: int = 0
+    selected_articles: int = 0
+    failed_articles: List[str] = field(default_factory=list)
+    access_blocks: int = 0
+    session_recoveries: int = 0
+
+
+@dataclass
 class Edition:
     """Represents a weekly edition of The Economist."""
     date: Optional[str] = None
@@ -72,6 +82,7 @@ class Edition:
     identifier: Optional[str] = None
     articles: List[Article] = field(default_factory=list)
     cover_url: Optional[str] = None
+    scrape_summary: ScrapeSummary = field(default_factory=ScrapeSummary)
 
     def articles_by_section(self) -> Dict[str, List[Article]]:
         """Group articles by section."""

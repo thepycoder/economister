@@ -74,6 +74,7 @@ class EconomistScraper:
             if not isinstance(diagnostics, dict):
                 diagnostics = {}
             self._emit_diagnostic("session_recovered", **diagnostics)
+            self.edition.scrape_summary.session_recoveries += 1
             return True
         except Exception as exc:
             print(f"  Session recovery failed: {exc}")
@@ -141,6 +142,7 @@ class EconomistScraper:
             )
 
             if blocked:
+                self.edition.scrape_summary.access_blocks += 1
                 if not recovered:
                     print(
                         "  Access blocked"
@@ -208,6 +210,7 @@ class EconomistScraper:
             raise
 
         print(f"Found {len(article_links)} unique articles")
+        self.edition.scrape_summary.indexed_articles = len(article_links)
 
         # Create Article objects with metadata
         for link_info in article_links:
@@ -314,6 +317,9 @@ class EconomistScraper:
                   f"(out of {original_count} available)")
 
         successful_articles = []
+        summary = self.edition.scrape_summary
+        summary.selected_articles = len(articles)
+        summary.failed_articles.clear()
 
         for i, article in enumerate(articles, 1):
             self._article_position = i
@@ -324,6 +330,8 @@ class EconomistScraper:
 
             if self.scrape_article(article):
                 successful_articles.append(article)
+            else:
+                summary.failed_articles.append(article.title or "Untitled article")
 
             if i < len(articles):
                 time.sleep(ARTICLE_FETCH_COOLDOWN)

@@ -79,6 +79,10 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertIsNotNone(edition.date)
         self.assertIsNotNone(edition.cover_url)
         self.assertGreater(len(edition.articles), 0)
+        self.assertEqual(
+            edition.scrape_summary.indexed_articles,
+            len(edition.articles),
+        )
 
         for article in edition.articles:
             self.assertIsNotNone(article.section)
@@ -244,6 +248,7 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertIn("Article", html)
         recover.assert_called_once()
         sleep.assert_called_once_with(300)
+        self.assertEqual(scraper.edition.scrape_summary.access_blocks, 1)
 
     @patch('scraper.BrowserManager')
     def test_fetch_page_aborts_after_repeated_document_403(
@@ -271,6 +276,7 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertEqual(mock_browser.navigate.call_count, 2)
         recover.assert_called_once()
         sleep.assert_called_once_with(300)
+        self.assertEqual(scraper.edition.scrape_summary.access_blocks, 2)
 
     @patch('scraper.BrowserManager')
     def test_scrape_article_propagates_access_block(self, mock_browser_class):
@@ -321,6 +327,8 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertEqual(mock_scrape_article.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
         sleep.assert_called_with(8)
+        self.assertEqual(scraper.edition.scrape_summary.selected_articles, 3)
+        self.assertEqual(scraper.edition.scrape_summary.failed_articles, [])
 
     @patch('scraper.EconomistScraper.scrape_article')
     def test_scrape_articles_no_limit(self, mock_scrape_article):
@@ -341,6 +349,26 @@ class TestEconomistScraper(unittest.TestCase):
         self.assertEqual(mock_scrape_article.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
         sleep.assert_called_with(8)
+        self.assertEqual(scraper.edition.scrape_summary.selected_articles, 3)
+
+    @patch('scraper.EconomistScraper.scrape_article')
+    def test_scrape_articles_records_omitted_articles(self, mock_scrape_article):
+        """Failed extractions are retained for the EPUB summary."""
+        mock_scrape_article.side_effect = [True, False]
+        scraper = EconomistScraper()
+        scraper.edition.articles = [
+            Article(title="Included", url="https://example.com/included"),
+            Article(title="Omitted", url="https://example.com/omitted"),
+        ]
+
+        with patch('scraper.time.sleep'):
+            result = scraper.scrape_articles()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            scraper.edition.scrape_summary.failed_articles,
+            ["Omitted"],
+        )
 
     @patch('scraper.BrowserManager')
     def test_cleanup(self, mock_browser_class):

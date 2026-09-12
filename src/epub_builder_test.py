@@ -188,6 +188,50 @@ class TestEpubBuilder(unittest.TestCase):
 
         self.assertIsNone(cover_page)
 
+    def test_create_scrape_summary_page_complete_after_recovery(self):
+        """Test a complete run reports resolved access issues."""
+        self.builder.chapters = [Mock(), Mock(), Mock()]
+        self.edition.articles = self.articles
+        summary = self.edition.scrape_summary
+        summary.indexed_articles = 3
+        summary.selected_articles = 3
+        summary.access_blocks = 1
+        summary.session_recoveries = 1
+
+        page = self.builder._create_scrape_summary_page(self.edition)
+
+        self.assertIn("Status: Complete after recovery", page.content)
+        self.assertIn("Articles found in index: 3", page.content)
+        self.assertIn("Articles included: 3", page.content)
+        self.assertIn("Access blocks detected: 1", page.content)
+        self.assertIn("Browser session recoveries: 1", page.content)
+
+    def test_create_scrape_summary_page_incomplete(self):
+        """Test omitted articles are reported safely."""
+        self.builder.chapters = [Mock(), Mock()]
+        summary = self.edition.scrape_summary
+        summary.indexed_articles = 3
+        summary.selected_articles = 3
+        summary.failed_articles = ["Markets & <money>"]
+
+        page = self.builder._create_scrape_summary_page(self.edition)
+
+        self.assertIn("Status: Incomplete", page.content)
+        self.assertIn("Articles omitted: 1", page.content)
+        self.assertIn("Markets &amp; &lt;money&gt;", page.content)
+
+    def test_create_scrape_summary_page_partial_run(self):
+        """Test an intentionally limited run is not called incomplete."""
+        self.builder.chapters = [Mock(), Mock()]
+        summary = self.edition.scrape_summary
+        summary.indexed_articles = 5
+        summary.selected_articles = 2
+
+        page = self.builder._create_scrape_summary_page(self.edition)
+
+        self.assertIn("Status: Partial run", page.content)
+        self.assertIn("Articles omitted: 0", page.content)
+
     def test_build_table_of_contents(self):
         """Test TOC generation follows edition section order."""
         for article in self.articles:
@@ -241,6 +285,14 @@ class TestEpubBuilder(unittest.TestCase):
 
             # Check chapters were created
             self.assertEqual(len(builder.chapters), 3)
+
+            # Cover, scrape summary, and navigation precede article chapters.
+            self.assertEqual(builder.book.spine[0].file_name, 'cover_page.xhtml')
+            self.assertEqual(
+                builder.book.spine[1].file_name,
+                'scrape_summary.xhtml',
+            )
+            self.assertEqual(builder.book.spine[2], 'nav')
 
             # Check sections were organized
             self.assertEqual(len(builder.sections), 3)

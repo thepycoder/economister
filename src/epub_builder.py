@@ -65,8 +65,13 @@ class EpubBuilder:
         # Create cover page
         cover_chapter = self._create_cover_page()
 
+        # Add scrape completeness information before the table of contents.
+        summary_chapter = self._create_scrape_summary_page(edition)
+
         # Build table of contents
-        self.book.toc = tuple(self._build_table_of_contents())
+        self.book.toc = tuple(
+            [summary_chapter] + self._build_table_of_contents()
+        )
 
         # Add stylesheet
         self._add_stylesheet()
@@ -77,9 +82,9 @@ class EpubBuilder:
 
         # Define spine
         if cover_chapter:
-            self.book.spine = [cover_chapter, 'nav'] + self.chapters
+            self.book.spine = [cover_chapter, summary_chapter, 'nav'] + self.chapters
         else:
-            self.book.spine = ['nav'] + self.chapters
+            self.book.spine = [summary_chapter, 'nav'] + self.chapters
 
         # Write EPUB
         output_file = Path('ebooks') / f'economist_{edition.date}.epub'
@@ -314,6 +319,90 @@ class EpubBuilder:
 
         print("  ✓ Cover page created")
         return cover_chapter
+
+    def _create_scrape_summary_page(self, edition: Edition) -> epub.EpubHtml:
+        """Create a compact report showing whether the edition is complete."""
+        import html as html_module
+
+        summary = edition.scrape_summary
+        included = len(self.chapters)
+        selected = summary.selected_articles or included
+        indexed = summary.indexed_articles or len(edition.articles) or selected
+        omitted = max(0, selected - included)
+
+        if omitted:
+            status = "Incomplete"
+            detail = (
+                f"{omitted} selected article{'s were' if omitted != 1 else ' was'} "
+                "not included in this EPUB."
+            )
+        elif selected < indexed:
+            status = "Partial run"
+            detail = (
+                "Every selected article was included, but this run intentionally "
+                "processed only part of the edition index."
+            )
+        elif summary.access_blocks or summary.session_recoveries:
+            status = "Complete after recovery"
+            detail = (
+                "Every indexed article was included after recovering from one or "
+                "more access or browser-session issues."
+            )
+        else:
+            status = "Complete"
+            detail = "Every article found in the edition index was included."
+
+        issues = []
+        if summary.access_blocks:
+            issues.append(
+                f"Access blocks detected: {summary.access_blocks}"
+            )
+        if summary.session_recoveries:
+            issues.append(
+                f"Browser session recoveries: {summary.session_recoveries}"
+            )
+        if summary.failed_articles:
+            failed = ", ".join(
+                html_module.escape(title)
+                for title in summary.failed_articles[:10]
+            )
+            if len(summary.failed_articles) > 10:
+                failed += f", and {len(summary.failed_articles) - 10} more"
+            issues.append(f"Articles omitted: {failed}")
+
+        if issues:
+            issue_html = "<ul>" + "".join(
+                f"<li>{issue}</li>" for issue in issues
+            ) + "</ul>"
+        else:
+            issue_html = "<p>No scraping issues were detected.</p>"
+
+        chapter = epub.EpubHtml(
+            title="Scrape summary",
+            file_name="scrape_summary.xhtml",
+            lang="en",
+        )
+        chapter.content = f'''<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title>Scrape summary</title>
+    <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+    <h1>Edition completeness</h1>
+    <p><strong>Status: {status}</strong></p>
+    <p>{detail}</p>
+    <ul>
+        <li>Articles found in index: {indexed}</li>
+        <li>Articles selected: {selected}</li>
+        <li>Articles included: {included}</li>
+        <li>Articles omitted: {omitted}</li>
+    </ul>
+    <h2>Scraping issues</h2>
+    {issue_html}
+</body>
+</html>'''
+        self.book.add_item(chapter)
+        return chapter
 
     def _build_table_of_contents(self) -> List:
         """Build hierarchical table of contents.

@@ -121,6 +121,8 @@ class TestEdition(unittest.TestCase):
         self.assertEqual(edition.identifier, "techweekly-20241215")
         self.assertEqual(edition.cover_url, "https://example.com/cover.jpg")
         self.assertEqual(len(edition.articles), 0)
+        self.assertEqual(edition.scrape_summary.indexed_articles, 0)
+        self.assertEqual(edition.scrape_summary.failed_articles, [])
 
     def test_articles_by_section(self):
         """Test grouping articles by section."""
