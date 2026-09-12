@@ -1,14 +1,20 @@
 """Main scraper orchestrator for The Economist."""
 
+import json
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from selenium.common.exceptions import WebDriverException
 
 from config import (
+    ACCESS_BLOCK_BACKOFF_SECONDS,
     ARTICLE_FETCH_COOLDOWN,
     ARTICLE_LOAD_WAIT_TIME,
     ECONOMIST_URL,
+    NONINTERACTIVE,
+    OUTPUT_DIR,
 )
 from models import Article, Edition
 from utils import (
@@ -18,6 +24,10 @@ from utils import (
 )
 from browser import BrowserManager, is_cloudflare_challenge
 from content_extractor import ContentExtractor
+
+
+class AccessBlockedError(RuntimeError):
+    """Raised when Economist access remains blocked after recovery."""
 
 
 class EconomistScraper:
@@ -33,18 +43,37 @@ class EconomistScraper:
         self.browser = BrowserManager()
         self.extractor = ContentExtractor(debug=debug)
         self.edition = Edition()
+        self._article_position: Optional[int] = None
+        self._article_total: Optional[int] = None
+        self._diagnostic_started = False
 
     def initialize(self) -> None:
         """Start Chrome, log in, and keep the browser for page fetches."""
         self.browser.setup()
         self.browser.login()
         print("Using headless Chrome for scraping")
+
+        html = self.browser.driver.page_source if self.browser.driver else ""
+        diagnostics = self.browser.collect_navigation_diagnostics(html)
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+        session_diagnostics = self.browser.session_diagnostics()
+        if isinstance(session_diagnostics, dict):
+            diagnostics.update(session_diagnostics)
+        self._emit_diagnostic("session", **diagnostics)
+
     def _recover_session(self) -> bool:
         """Restart browser login after a tab crash or block."""
         print("  Recovering authenticated Chrome session...")
         try:
+            self.browser.quit()
             self.browser.setup()
             self.browser.login()
+            html = self.browser.driver.page_source if self.browser.driver else ""
+            diagnostics = self.browser.collect_navigation_diagnostics(html)
+            if not isinstance(diagnostics, dict):
+                diagnostics = {}
+            self._emit_diagnostic("session_recovered", **diagnostics)
             return True
         except Exception as exc:
             print(f"  Session recovery failed: {exc}")
@@ -84,23 +113,71 @@ class EconomistScraper:
                 html = self.browser.navigate(url, wait_time=settle)
             except (WebDriverException, RuntimeError) as exc:
                 last_error = exc
+                self._emit_diagnostic(
+                    "navigation_error",
+                    requested_url=url,
+                    attempt=_attempt + 1,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:300],
+                )
                 if not recovered and self._recover_session():
                     recovered = True
                     continue
                 raise
 
-            if self._html_is_blocked(html):
-                if not recovered and self._recover_session():
-                    recovered = True
-                    continue
-                raise RuntimeError(
-                    f"Cloudflare or login wall still present for {url}"
+            diagnostics = self.browser.collect_navigation_diagnostics(html)
+            if not isinstance(diagnostics, dict):
+                diagnostics = {}
+            document_status = self._blocked_document_status(diagnostics)
+            blocked = self._html_is_blocked(html) or document_status is not None
+            self._emit_diagnostic(
+                "fetch",
+                requested_url=url,
+                attempt=_attempt + 1,
+                blocked=blocked,
+                blocked_document_status=document_status,
+                interactive="/interactive/" in url,
+                **diagnostics,
+            )
+
+            if blocked:
+                if not recovered:
+                    print(
+                        "  Access blocked"
+                        + (f" (HTTP {document_status})" if document_status else "")
+                        + f"; waiting {ACCESS_BLOCK_BACKOFF_SECONDS} seconds "
+                        "before restarting Chrome..."
+                    )
+                    self._emit_diagnostic(
+                        "access_block_backoff",
+                        requested_url=url,
+                        document_status=document_status,
+                        backoff_seconds=ACCESS_BLOCK_BACKOFF_SECONDS,
+                    )
+                    time.sleep(ACCESS_BLOCK_BACKOFF_SECONDS)
+                    if self._recover_session():
+                        recovered = True
+                        continue
+                raise AccessBlockedError(
+                    f"Economist access remains blocked for {url}"
                 )
             return html
 
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to fetch {url}")
+
+    @staticmethod
+    def _blocked_document_status(diagnostics: dict) -> Optional[int]:
+        """Return a top-level access-block status reported by Chrome."""
+        for failure in diagnostics.get("network_failures", []):
+            if (
+                failure.get("kind") == "response"
+                and failure.get("type") == "Document"
+                and failure.get("status") in {401, 403, 429}
+            ):
+                return failure["status"]
+        return None
 
     def scrape_weekly_edition(self) -> Edition:
         """Scrape the weekly edition page for article links.
@@ -162,6 +239,7 @@ class EconomistScraper:
             save_debug_html(article.title or "article", html, self.debug)
 
             # Extract content into the same article object
+            seen_images_before = len(self.extractor.seen_image_urls)
             extracted = self.extractor.extract_article(html, article.url)
 
             # Update article with extracted content
@@ -170,7 +248,22 @@ class EconomistScraper:
             article.subtitle = extracted.subtitle
             article.content_blocks = extracted.content_blocks
 
-            if not has_extractable_content(article):
+            extractable = has_extractable_content(article)
+            self._emit_diagnostic(
+                "extraction",
+                requested_url=article.url,
+                requested_title=article.title,
+                section=article.section,
+                interactive="/interactive/" in article.url,
+                paragraph_count=article.paragraph_count,
+                image_count=article.image_count,
+                content_block_count=len(article.content_blocks),
+                seen_images_before=seen_images_before,
+                seen_images_after=len(self.extractor.seen_image_urls),
+                extractable=extractable,
+            )
+
+            if not extractable:
                 print("  ⚠ Skipped (no text or images found)")
                 return False
 
@@ -178,7 +271,17 @@ class EconomistScraper:
                   f"{article.image_count} images")
             return True
 
+        except AccessBlockedError:
+            raise
         except Exception as e:
+            self._emit_diagnostic(
+                "extraction_error",
+                requested_url=article.url,
+                requested_title=article.title,
+                section=article.section,
+                error_type=type(e).__name__,
+                error=str(e)[:300],
+            )
             print(f"  ✗ Error: {e}")
             return False
 
@@ -213,6 +316,8 @@ class EconomistScraper:
         successful_articles = []
 
         for i, article in enumerate(articles, 1):
+            self._article_position = i
+            self._article_total = len(articles)
             section = article.section or "Unknown"
             title = (article.title or "Untitled")[:50]
             print(f"\n[{i}/{len(articles)}] [{section}] {title}...")
@@ -224,6 +329,27 @@ class EconomistScraper:
                 time.sleep(ARTICLE_FETCH_COOLDOWN)
 
         return successful_articles
+
+    def _emit_diagnostic(self, event: str, **payload) -> None:
+        """Print one safe, machine-readable diagnostic record."""
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "article_position": self._article_position,
+            "article_total": self._article_total,
+            **payload,
+        }
+        line = json.dumps(
+            record, ensure_ascii=True, sort_keys=True, default=str
+        )
+        print("ECONOMISTER_DIAG " + line)
+
+        if NONINTERACTIVE:
+            path = Path(OUTPUT_DIR) / "economister_diagnostics.jsonl"
+            mode = "a" if self._diagnostic_started else "w"
+            with path.open(mode, encoding="utf-8") as fh:
+                fh.write(line + "\n")
+            self._diagnostic_started = True
 
     def _articles_until_section(
         self, articles: List[Article], until_section: str

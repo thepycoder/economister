@@ -1,8 +1,15 @@
 """Browser management for web scraping."""
 
 import atexit
+import json
+import os
 import time
+import uuid
+from collections import Counter
+from hashlib import sha256
+from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlsplit
 
 import requests
 from requests.cookies import create_cookie
@@ -462,6 +469,8 @@ class BrowserManager:
     """Initialize browser manager."""
     self.driver: Optional[WebDriver] = None
     self._headless = HEADLESS
+    self.run_id = uuid.uuid4().hex[:12]
+    self.navigation_count = 0
     atexit.register(self.quit)
 
   def setup(self, headless: Optional[bool] = None) -> None:
@@ -490,6 +499,9 @@ class BrowserManager:
       options.add_experimental_option(
         "prefs",
         {"profile.default_content_setting_values.notifications": 2},
+      )
+      options.set_capability(
+        "goog:loggingPrefs", {"performance": "ALL", "browser": "ALL"}
       )
       self.driver = webdriver.Chrome(options=options)
       self._headless = use_headless
@@ -606,12 +618,235 @@ class BrowserManager:
     if not self.driver:
       raise RuntimeError("Browser not initialized. Call setup() first.")
 
+    self._drain_browser_logs()
     if not _safe_navigate(self.driver, url):
       raise RuntimeError(f"Browser tab crashed while opening {url}")
+    self.navigation_count += 1
     dismiss_cookie_banner(self.driver, timeout=3)
     wait_out_cloudflare(self.driver)
     time.sleep(wait_time)
     return self.driver.page_source
+
+  def collect_navigation_diagnostics(self, html: str) -> dict:
+    """Return safe metadata about the current page and browser session."""
+    if not self.driver:
+      return {"diagnostic_error": "browser_not_initialized"}
+    driver = self.driver
+
+    try:
+      dom = driver.execute_script("""
+        const count = selector => document.querySelectorAll(selector).length;
+        const textLength = selector => {
+          const element = document.querySelector(selector);
+          return element && element.innerText ? element.innerText.length : 0;
+        };
+        const navigation = performance.getEntriesByType('navigation')[0];
+        const memory = performance.memory || {};
+        return {
+          ready_state: document.readyState,
+          visibility_state: document.visibilityState,
+          h1_count: count('h1'),
+          main_count: count('main'),
+          article_count: count('article'),
+          new_article_template_count: count('article#new-article-template'),
+          data_article_body_count: count('[data-component="article-body"]'),
+          itemprop_article_body_count: count('[itemprop="articleBody"]'),
+          body_text_count: count('body-text'),
+          paragraph_count: count('p'),
+          figure_count: count('figure'),
+          image_count: count('img'),
+          body_text_chars: textLength('body'),
+          main_text_chars: textLength('main'),
+          article_text_chars: textLength('article'),
+          navigator_webdriver: navigator.webdriver,
+          user_agent: navigator.userAgent,
+          service_worker_controlled: Boolean(navigator.serviceWorker?.controller),
+          navigation_ms: navigation ? Math.round(navigation.duration) : null,
+          response_end_ms: navigation ? Math.round(navigation.responseEnd) : null,
+          dom_content_loaded_ms: navigation
+            ? Math.round(navigation.domContentLoadedEventEnd) : null,
+          load_event_ms: navigation ? Math.round(navigation.loadEventEnd) : null,
+          js_heap_used_mb: memory.usedJSHeapSize
+            ? Math.round(memory.usedJSHeapSize / 1048576) : null,
+          js_heap_limit_mb: memory.jsHeapSizeLimit
+            ? Math.round(memory.jsHeapSizeLimit / 1048576) : null,
+        };
+      """) or {}
+    except WebDriverException as exc:
+      dom = {"dom_diagnostic_error": type(exc).__name__}
+
+    cookies = {}
+    try:
+      cookies = {c.get("name"): c for c in driver.get_cookies()}
+    except WebDriverException:
+      pass
+
+    subscriber = cookies.get("state-is-subscriber")
+    subscriber_value = str((subscriber or {}).get("value", "")).lower()
+    now = int(time.time())
+    auth_expiry = (cookies.get("fcx_access_token") or {}).get("expiry")
+
+    lower = (html or "").lower()
+    page_markers = [
+      marker for marker in (
+        "already have an account?",
+        "continue with a free trial",
+        "create account to unlock",
+        "get full access to our independent journalism",
+        "subscribe to read",
+        "register to read",
+        "just a moment",
+        "cdn-cgi/challenge",
+        "cf-browser-verification",
+        "cf-challenge",
+        "checking your browser before accessing",
+        "application error",
+        "internal server error",
+      ) if marker in lower
+    ]
+
+    result = {
+      "run_id": self.run_id,
+      "pid": os.getpid(),
+      "navigation": self.navigation_count,
+      "final_url": _safe_current_url(driver),
+      "title": self._safe_title(),
+      "html_bytes": len((html or "").encode("utf-8")),
+      "html_sha256_12": sha256((html or "").encode("utf-8")).hexdigest()[:12],
+      "page_markers": page_markers,
+      "cookie_count": len(cookies),
+      "subscriber_cookie_present": subscriber is not None,
+      "subscriber_cookie_truthy": subscriber_value in {
+        "1", "true", "yes", "active", "subscriber", "subscribed"
+      },
+      "auth_complete_cookie_present": "economist_auth_complete" in cookies,
+      "access_token_cookie_present": "fcx_access_token" in cookies,
+      "refresh_token_cookie_present": "fcx_refresh_token" in cookies,
+      "access_token_expires_in_seconds": (
+        int(auth_expiry) - now if isinstance(auth_expiry, (int, float)) else None
+      ),
+      "cgroup_memory_mb": self._cgroup_memory_mb("memory.current"),
+      "cgroup_memory_limit_mb": self._cgroup_memory_mb("memory.max"),
+      **dom,
+      **self._network_diagnostics(),
+    }
+    return result
+
+  def session_diagnostics(self) -> dict:
+    """Return safe browser identity and authentication metadata."""
+    if not self.driver:
+      return {"diagnostic_error": "browser_not_initialized"}
+    driver = self.driver
+    capabilities = driver.capabilities or {}
+    chrome = capabilities.get("chrome") or {}
+    driver_version = str(chrome.get("chromedriverVersion") or "")
+    return {
+      "run_id": self.run_id,
+      "pid": os.getpid(),
+      "headless": self._headless,
+      "browser_version": capabilities.get("browserVersion"),
+      "chromedriver_version": driver_version.split(" ", 1)[0] or None,
+      "current_url": _safe_current_url(driver),
+      "title": self._safe_title(),
+      "cgroup_memory_mb": self._cgroup_memory_mb("memory.current"),
+      "cgroup_memory_limit_mb": self._cgroup_memory_mb("memory.max"),
+    }
+
+  def _network_diagnostics(self) -> dict:
+    """Summarize network and console logs without response bodies or tokens."""
+    if not self.driver:
+      return {
+        "network_status_counts": {},
+        "network_failures": [],
+        "browser_log_counts": {},
+      }
+    driver = self.driver
+    status_counts: Counter[str] = Counter()
+    failures = []
+    loading_failure_counts: Counter[str] = Counter()
+    browser_log_counts: Counter[str] = Counter()
+
+    try:
+      performance_logs = driver.get_log("performance")
+    except (WebDriverException, ValueError):
+      performance_logs = []
+
+    for entry in performance_logs:
+      try:
+        message = json.loads(entry.get("message", "{}"))["message"]
+      except (KeyError, TypeError, ValueError):
+        continue
+      method = message.get("method")
+      params = message.get("params") or {}
+      if method == "Network.responseReceived":
+        resource_type = params.get("type", "Other")
+        if resource_type not in {"Document", "Fetch", "XHR"}:
+          continue
+        response = params.get("response") or {}
+        status = int(response.get("status") or 0)
+        status_counts[f"{resource_type}:{status}"] += 1
+        if status >= 400 and len(failures) < 10:
+          failures.append({
+            "kind": "response",
+            "type": resource_type,
+            "status": status,
+            "target": self._safe_request_target(response.get("url", "")),
+          })
+      elif method == "Network.loadingFailed":
+        key = ":".join(filter(None, (
+          str(params.get("type") or "Other"),
+          str(params.get("errorText") or "unknown"),
+          str(params.get("blockedReason") or ""),
+        )))
+        loading_failure_counts[key] += 1
+
+    try:
+      for entry in driver.get_log("browser"):
+        browser_log_counts[str(entry.get("level", "UNKNOWN"))] += 1
+    except (WebDriverException, ValueError):
+      pass
+
+    return {
+      "network_status_counts": dict(status_counts),
+      "network_failures": failures,
+      "network_loading_failure_counts": dict(loading_failure_counts),
+      "browser_log_counts": dict(browser_log_counts),
+    }
+
+  def _drain_browser_logs(self) -> None:
+    """Discard logs from the previous navigation."""
+    if not self.driver:
+      return
+    driver = self.driver
+    for log_type in ("performance", "browser"):
+      try:
+        driver.get_log(log_type)
+      except (WebDriverException, ValueError):
+        pass
+
+  def _safe_title(self) -> str:
+    if not self.driver:
+      return ""
+    driver = self.driver
+    try:
+      return driver.title or ""
+    except WebDriverException:
+      return ""
+
+  @staticmethod
+  def _safe_request_target(url: str) -> str:
+    parsed = urlsplit(str(url or ""))
+    return f"{parsed.netloc}{parsed.path}"[:300]
+
+  @staticmethod
+  def _cgroup_memory_mb(filename: str) -> Optional[int]:
+    try:
+      raw = (Path("/sys/fs/cgroup") / filename).read_text().strip()
+      if raw == "max":
+        return None
+      return round(int(raw) / 1048576)
+    except (OSError, ValueError):
+      return None
 
   def quit(self) -> None:
     """Close browser and cleanup."""

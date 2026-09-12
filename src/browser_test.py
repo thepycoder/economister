@@ -1,5 +1,6 @@
 """Tests for the browser module."""
 
+import json
 import unittest
 from unittest.mock import Mock, PropertyMock, patch
 
@@ -199,6 +200,10 @@ class TestBrowserManager(unittest.TestCase):
     self.assertIn("--headless=new", options.arguments)
     self.assertTrue(
       any(arg.startswith("--user-agent=") for arg in options.arguments)
+    )
+    self.assertEqual(
+      options.capabilities["goog:loggingPrefs"],
+      {"performance": "ALL", "browser": "ALL"},
     )
 
   @patch("browser.HEADLESS", False)
@@ -430,6 +435,50 @@ class TestBrowserManager(unittest.TestCase):
       self.browser.navigate("https://example.com")
 
     self.assertIn("Browser not initialized", str(context.exception))
+
+  def test_collect_navigation_diagnostics_is_safe_and_structured(self):
+    """Diagnostics expose response state without cookie values or queries."""
+    driver = Mock()
+    driver.current_url = "https://www.economist.com/leaders/example"
+    driver.title = "Example article"
+    driver.execute_script.return_value = {
+      "ready_state": "complete",
+      "article_count": 1,
+    }
+    driver.get_cookies.return_value = [
+      {"name": "state-is-subscriber", "value": "true"},
+      {"name": "fcx_access_token", "value": "secret", "expiry": 2000},
+      {"name": "economist_auth_complete", "value": "secret"},
+    ]
+    performance_entry = {
+      "message": json.dumps({
+        "message": {
+          "method": "Network.responseReceived",
+          "params": {
+            "type": "Fetch",
+            "response": {
+              "status": 403,
+              "url": "https://api.economist.com/content?token=secret",
+            },
+          },
+        }
+      })
+    }
+    driver.get_log.side_effect = [[performance_entry], []]
+    self.browser.driver = driver
+
+    with patch("browser.time.time", return_value=1000):
+      result = self.browser.collect_navigation_diagnostics("<html></html>")
+
+    self.assertTrue(result["subscriber_cookie_truthy"])
+    self.assertEqual(result["access_token_expires_in_seconds"], 1000)
+    self.assertEqual(result["network_status_counts"], {"Fetch:403": 1})
+    self.assertEqual(
+      result["network_failures"][0]["target"],
+      "api.economist.com/content",
+    )
+    serialized = json.dumps(result)
+    self.assertNotIn("secret", serialized)
 
   @patch("browser.webdriver.Chrome")
   def test_quit(self, mock_chrome):

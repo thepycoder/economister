@@ -1,10 +1,13 @@
 """Tests for the scraper module."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from selenium.common.exceptions import WebDriverException
-from scraper import EconomistScraper
+from scraper import AccessBlockedError, EconomistScraper
 from models import Article, Edition
 from test_fixtures import (
     MOCK_ARTICLE_JOBS_HTML,
@@ -195,10 +198,13 @@ class TestEconomistScraper(unittest.TestCase):
 
         scraper = EconomistScraper()
 
-        with patch.object(scraper, '_recover_session', return_value=True) as recover:
+        with patch.object(
+            scraper, '_recover_session', return_value=True
+        ) as recover, patch('scraper.time.sleep') as sleep:
             html = scraper._fetch_page("https://www.economist.com/article")
 
         recover.assert_called_once()
+        sleep.assert_called_once_with(300)
         self.assertIn("Article", html)
 
         recover.reset_mock()
@@ -208,6 +214,78 @@ class TestEconomistScraper(unittest.TestCase):
                 scraper._fetch_page("https://www.economist.com/article")
 
         recover.assert_called_once()
+
+    @patch('scraper.BrowserManager')
+    def test_fetch_page_recovers_after_document_403(self, mock_browser_class):
+        """A top-level 403 triggers backoff, re-login, and one retry."""
+        mock_browser = self._mock_browser("<html><h1>Article</h1></html>")
+        mock_browser.navigate.side_effect = [
+            "<html>blocked</html>",
+            "<html><h1>Article</h1></html>",
+        ]
+        mock_browser.collect_navigation_diagnostics.side_effect = [
+            {
+                'network_failures': [{
+                    'kind': 'response',
+                    'type': 'Document',
+                    'status': 403,
+                }],
+            },
+            {'network_failures': []},
+        ]
+        mock_browser_class.return_value = mock_browser
+        scraper = EconomistScraper()
+
+        with patch.object(
+            scraper, '_recover_session', return_value=True
+        ) as recover, patch('scraper.time.sleep') as sleep:
+            html = scraper._fetch_page("https://www.economist.com/article")
+
+        self.assertIn("Article", html)
+        recover.assert_called_once()
+        sleep.assert_called_once_with(300)
+
+    @patch('scraper.BrowserManager')
+    def test_fetch_page_aborts_after_repeated_document_403(
+        self, mock_browser_class
+    ):
+        """A retry that is also blocked aborts the scrape."""
+        mock_browser = self._mock_browser("<html>blocked</html>")
+        diagnostic = {
+            'network_failures': [{
+                'kind': 'response',
+                'type': 'Document',
+                'status': 403,
+            }],
+        }
+        mock_browser.collect_navigation_diagnostics.return_value = diagnostic
+        mock_browser_class.return_value = mock_browser
+        scraper = EconomistScraper()
+
+        with patch.object(
+            scraper, '_recover_session', return_value=True
+        ) as recover, patch('scraper.time.sleep') as sleep:
+            with self.assertRaises(AccessBlockedError):
+                scraper._fetch_page("https://www.economist.com/article")
+
+        self.assertEqual(mock_browser.navigate.call_count, 2)
+        recover.assert_called_once()
+        sleep.assert_called_once_with(300)
+
+    @patch('scraper.BrowserManager')
+    def test_scrape_article_propagates_access_block(self, mock_browser_class):
+        """Persistent access blocks prevent a partial EPUB build."""
+        mock_browser_class.return_value = self._mock_browser("")
+        scraper = EconomistScraper()
+        article = Article(url="https://www.economist.com/leaders/article")
+
+        with patch.object(
+            scraper,
+            '_fetch_page',
+            side_effect=AccessBlockedError("blocked"),
+        ):
+            with self.assertRaises(AccessBlockedError):
+                scraper.scrape_article(article)
 
     @patch('scraper.BrowserManager')
     def test_scrape_article_error(self, mock_browser_class):
@@ -236,10 +314,13 @@ class TestEconomistScraper(unittest.TestCase):
                 Article(title=f"Article {i}", url=f"https://example.com/{i}")
             )
 
-        result = scraper.scrape_articles(limit=3)
+        with patch('scraper.time.sleep') as sleep:
+            result = scraper.scrape_articles(limit=3)
 
         self.assertEqual(len(result), 3)
         self.assertEqual(mock_scrape_article.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        sleep.assert_called_with(8)
 
     @patch('scraper.EconomistScraper.scrape_article')
     def test_scrape_articles_no_limit(self, mock_scrape_article):
@@ -253,10 +334,13 @@ class TestEconomistScraper(unittest.TestCase):
                 Article(title=f"Article {i}", url=f"https://example.com/{i}")
             )
 
-        result = scraper.scrape_articles()
+        with patch('scraper.time.sleep') as sleep:
+            result = scraper.scrape_articles()
 
         self.assertEqual(len(result), 3)
         self.assertEqual(mock_scrape_article.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        sleep.assert_called_with(8)
 
     @patch('scraper.BrowserManager')
     def test_cleanup(self, mock_browser_class):
@@ -268,6 +352,22 @@ class TestEconomistScraper(unittest.TestCase):
         scraper.cleanup()
 
         mock_browser.quit.assert_called_once()
+
+    def test_diagnostics_persist_for_noninteractive_run(self):
+        """Docker diagnostics are written to the mounted output directory."""
+        scraper = EconomistScraper()
+
+        with tempfile.TemporaryDirectory() as output_dir, patch(
+            'scraper.NONINTERACTIVE', True
+        ), patch('scraper.OUTPUT_DIR', output_dir), patch('builtins.print'):
+            path = Path(output_dir) / 'economister_diagnostics.jsonl'
+            path.write_text('stale\n')
+            scraper._emit_diagnostic('session', run_id='test-run')
+            scraper._emit_diagnostic('fetch', requested_url='https://example.com')
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+
+        self.assertEqual([r['event'] for r in records], ['session', 'fetch'])
+        self.assertEqual(records[0]['run_id'], 'test-run')
 
     @patch('scraper.save_debug_html')
     @patch('scraper.BrowserManager')
