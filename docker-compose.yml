@@ -2,9 +2,11 @@
 #
 # Before deploy:
 #   1. Set ECONOMIST_EMAIL and ECONOMIST_PASSWORD.
-#   2. Change the volume host path to your share
+#   2. Set OPENROUTER_API_KEY (Belgium briefing). Leave unset to skip
+#      generation; the Economist EPUB still builds.
+#   3. Change the volume host path to your share
 #      (UGOS Pro: /media/<share-name>/economist).
-#   3. Allow the Docker socket mount for Ofelia.
+#   4. Allow the Docker socket mount for Ofelia.
 #
 # The Economist digital edition usually appears ~21:00 UK time on Thursday.
 # Ofelia starts the job at 22:00 Europe/London every Thursday.
@@ -25,8 +27,8 @@ services:
       ECONOMISTER_NONINTERACTIVE: "true"
       ECONOMIST_EMAIL: "your-email@example.com"
       ECONOMIST_PASSWORD: "your-password"
-      OPENROUTER_API_KEY: ""
-      BELGIUM_SECTION: "true"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      BELGIUM_SECTION: "${BELGIUM_SECTION:-true}"
     volumes:
       - /media/YOUR_SHARE/economist:/app/ebooks
       - /media/YOUR_SHARE/economist/belgium_runs:/app/belgium_runs

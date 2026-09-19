@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import html
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
 from belgium.config import BELGIUM_RUNS_DIR, OPENROUTER_API_KEY
 from belgium.models import BelgiumArticle, Shortlist
 from belgium.pipeline import load_existing_articles, run_pipeline, stage_write
+
+FRESH_RUN_DAYS = 7
 
 
 def list_run_dirs(base: Optional[Path] = None) -> List[Path]:
@@ -27,6 +31,28 @@ def latest_run_dir(base: Optional[Path] = None) -> Optional[Path]:
     """Return the newest run directory, if any."""
     runs = list_run_dirs(base)
     return runs[0] if runs else None
+
+
+def run_is_fresh(run_dir: Path, *, days: int = FRESH_RUN_DAYS) -> bool:
+    """True when the run was created within the current briefing window."""
+    created = None
+    state_path = run_dir / "run.json"
+    if state_path.exists():
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            created = data.get("created_at")
+    if not created:
+        created = run_dir.name[:10]
+    try:
+        stamp = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - stamp <= timedelta(days=days)
 
 
 def to_epub_article(piece: BelgiumArticle) -> Any:
@@ -74,6 +100,9 @@ def collect_belgium_epub_articles(
 ) -> List[Any]:
     """Load this week's Belgium pieces, generating them only if needed."""
     chosen = Path(run_dir) if run_dir is not None else latest_run_dir()
+    if chosen is not None and run_dir is None and not run_is_fresh(chosen):
+        chosen = None
+
     if chosen is not None and shortlist_is_written(chosen):
         return [to_epub_article(article) for article in load_existing_articles(chosen)]
 
@@ -83,6 +112,7 @@ def collect_belgium_epub_articles(
         return [to_epub_article(article) for article in load_existing_articles(chosen)]
 
     if not OPENROUTER_API_KEY:
+        print("Belgium section: OPENROUTER_API_KEY is unset; skipping generation")
         if chosen is None:
             return []
         return [to_epub_article(article) for article in load_existing_articles(chosen)]

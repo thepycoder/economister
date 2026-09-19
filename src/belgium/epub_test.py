@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from belgium.epub import (
     collect_belgium_epub_articles,
+    run_is_fresh,
     shortlist_is_written,
     to_epub_article,
     try_attach_belgium_articles,
@@ -83,6 +84,32 @@ class TestBelgiumEpub(unittest.TestCase):
             out = try_attach_belgium_articles(existing, enabled=True)
         self.assertIs(out, existing)
         self.assertEqual(len(out), 1)
+
+    def test_stale_run_starts_new_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = Path(tmp) / "2026-01-01"
+            stale.mkdir()
+            (stale / "run.json").write_text(
+                json.dumps({"created_at": "2026-01-01T00:00:00Z"}),
+                encoding="utf-8",
+            )
+            self.assertFalse(run_is_fresh(stale))
+            created = []
+
+            def fake_pipeline(**kwargs):
+                created.append(True)
+                fresh = Path(tmp) / "fresh"
+                fresh.mkdir()
+                (fresh / "articles").mkdir()
+                _piece("new").save(fresh / "articles" / "new.json")
+                return fresh
+
+            with patch("belgium.epub.latest_run_dir", return_value=stale):
+                with patch("belgium.epub.OPENROUTER_API_KEY", "sk-test"):
+                    with patch("belgium.epub.run_pipeline", side_effect=fake_pipeline):
+                        articles = collect_belgium_epub_articles(generate=True)
+            self.assertTrue(created)
+            self.assertEqual(articles[0].title, "Belgium's grid <test>")
 
     def test_attach_disabled(self) -> None:
         existing = []
