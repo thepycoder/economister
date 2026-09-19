@@ -17,11 +17,13 @@ temp/
 debug/
 log/
 logs/
+belgium_runs/
 *.epub
 *.md
 !README.md
 !install-instructions.md
 !AUTH_README.md
+!src/belgium/prompts/*.md
 
 # Authentication
 economist_cookies.json
@@ -36,5 +38,6 @@ economist_cookie.txt
 *.swo
 .DS_Store
 
-# Claude
+# Claude / OpenCode
 .claude/
+.opencode/

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BelgiumShortlist",
+  "type": "object",
+  "required": ["topics"],
+  "properties": {
+    "notes": { "type": ["string", "null"] },
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["slug", "working_hed", "why_economist", "source_urls", "confidence"],
+        "properties": {
+          "slug": { "type": "string", "minLength": 1 },
+          "working_hed": { "type": "string", "minLength": 1 },
+          "why_economist": { "type": "string", "minLength": 1 },
+          "source_urls": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

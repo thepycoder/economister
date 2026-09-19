@@ -49,16 +49,36 @@ def run_specific_tests(test_name, verbosity=2):
         TestResult object
     """
     loader = unittest.TestLoader()
+    start_dir = Path(__file__).parent
+
+    # Package path: belgium / belgium.models_test
+    if test_name == 'belgium' or test_name.startswith('belgium.'):
+        suite = loader.discover(
+            str(start_dir / 'belgium'),
+            pattern='*_test.py',
+            top_level_dir=str(start_dir),
+        )
+        if test_name.startswith('belgium.') and test_name != 'belgium':
+            # Narrow to one module if possible.
+            module_name = test_name
+            if not module_name.endswith('_test'):
+                module_name = module_name + '_test'
+            try:
+                suite = loader.loadTestsFromName(module_name)
+            except Exception:
+                pass
+        runner = unittest.TextTestRunner(verbosity=verbosity)
+        return runner.run(suite)
 
     # Try to load as module first
     try:
         if not test_name.endswith('_test'):
             test_name = test_name.replace('.py', '') + '_test'
         suite = loader.loadTestsFromName(test_name)
-    except:
+    except Exception:
         # Try to load as test class
         suite = unittest.TestSuite()
-        for module in Path(__file__).parent.glob('*_test.py'):
+        for module in start_dir.glob('*_test.py'):
             module_name = module.stem
             try:
                 test_module = __import__(module_name)
@@ -66,7 +86,7 @@ def run_specific_tests(test_name, verbosity=2):
                     suite.addTests(loader.loadTestsFromTestCase(
                         getattr(test_module, test_name)
                     ))
-            except:
+            except Exception:
                 continue
 
     runner = unittest.TextTestRunner(verbosity=verbosity)

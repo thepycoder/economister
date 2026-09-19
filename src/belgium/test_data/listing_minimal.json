@@ -1,0 +1,95 @@
+{
+  "type": "page",
+  "compositions": [
+    {
+      "type": "articleTeaser",
+      "title": {
+        "text": "Houthi's eisen aanvallen op Riyad en \"gevoelige sites\" in Saudi-Arabië op"
+      },
+      "subtitle": {
+        "text": ""
+      },
+      "action": {
+        "uri": "https://www.vrt.be/vrtnws/nl/2026/09/19/saoedi-arabie-vlammen-en-een-dikke-zwarte-rookpluim-hoofdstad-ri/"
+      },
+      "publication": {
+        "timestamp": 1726750000000
+      },
+      "tag": {
+        "text": "Midden-Oosten"
+      }
+    },
+    {
+      "type": "articleTeaser",
+      "title": {
+        "text": "Belgische tafeltennisbond slachtoffer van cyberaanval, gegevens van ruim 65.000 leden mogelijk gestolen"
+      },
+      "subtitle": {
+        "text": ""
+      },
+      "action": {
+        "uri": "https://www.vrt.be/vrtnws/nl/2026/09/19/belgische-tafeltennisbond-slachtoffer-van-cyberaanval/"
+      },
+      "publication": {
+        "timestamp": 1726750000000
+      },
+      "tag": {
+        "text": "Binnenland"
+      }
+    },
+    {
+      "type": "articleTeaser",
+      "title": {
+        "text": "\"Excessief geweld tegen politie en Hitlergroeten gebracht\": Nederlandse premier reageert op rellen door extreemrechts in Den Haag"
+      },
+      "subtitle": {
+        "text": ""
+      },
+      "action": {
+        "uri": "https://www.vrt.be/vrtnws/nl/2026/09/19/den-haag-mars-extreemrechts-loopt-uit-de-hand/"
+      },
+      "publication": {
+        "timestamp": 1726750000000
+      },
+      "tag": {
+        "text": "Nederland"
+      }
+    },
+    {
+      "type": "articleTeaser",
+      "title": {
+        "text": "Evert de Clercq, die huurmoordenaar voor Kasteelmoord regelde, vrijgelaten uit Nederlandse gevangenis"
+      },
+      "subtitle": {
+        "text": ""
+      },
+      "action": {
+        "uri": "https://www.vrt.be/vrtnws/nl/2026/09/19/kasteelmoord-evert-de-clercq-vrijgelaten/"
+      },
+      "publication": {
+        "timestamp": 1726750000000
+      },
+      "tag": {
+        "text": "Kasteelmoord"
+      }
+    },
+    {
+      "type": "articleTeaser",
+      "title": {
+        "text": "Museum Brutus Art Space in Rotterdam blijft toch gespaard: brand woedde in containers en opslagloods naast gebouw"
+      },
+      "subtitle": {
+        "text": ""
+      },
+      "action": {
+        "uri": "https://www.vrt.be/vrtnws/nl/2026/09/19/grote-brand-bij-museum-in-rotterdam/"
+      },
+      "publication": {
+        "timestamp": 1726750000000
+      },
+      "tag": {
+        "text": "Nederland"
+      }
+    }
+  ]
+}
