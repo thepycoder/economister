@@ -15,6 +15,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.config import BELGIUM_SECTION  # noqa: E402
 from src.epub_builder import EpubBuilder  # noqa: E402
 from src.scraper import EconomistScraper  # noqa: E402
 from src.utils import create_directories  # noqa: E402
@@ -57,6 +58,12 @@ Targeting specific past editions is not supported by design.
         help='Scrape through this section inclusive (e.g. Leaders), then stop'
     )
 
+    parser.add_argument(
+        '--no-belgium',
+        action='store_true',
+        help='Skip the optional Belgium briefing section'
+    )
+
     args = parser.parse_args()
 
     if args.limit is not None and args.limit <= 0:
@@ -95,6 +102,11 @@ Targeting specific past editions is not supported by design.
             print("No articles successfully scraped!")
             return
 
+        _try_add_belgium_section(
+            successful_articles,
+            enabled=BELGIUM_SECTION and not args.no_belgium,
+        )
+
         # Build EPUB
         output_file = builder.build(edition, successful_articles)
 
@@ -123,6 +135,22 @@ Targeting specific past editions is not supported by design.
             scraper.cleanup()
         except Exception:
             pass
+
+
+def _try_add_belgium_section(articles, *, enabled: bool) -> None:
+    """Best-effort Belgium briefing. Failures must not block the EPUB."""
+    if not enabled:
+        print("\nBelgium section disabled")
+        return
+    try:
+        src_dir = Path(__file__).resolve().parent
+        if str(src_dir) not in sys.path:
+            sys.path.insert(0, str(src_dir))
+        from belgium.epub import try_attach_belgium_articles
+
+        try_attach_belgium_articles(articles, enabled=True)
+    except Exception as exc:
+        print(f"\n⚠ Belgium section skipped: {exc}")
 
 
 if __name__ == "__main__":

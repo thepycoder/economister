@@ -27,6 +27,9 @@ HEADLESS = _env_bool("HEADLESS", True)
 # Docker/NAS runs have no display or keyboard. Fail instead of waiting for input().
 NONINTERACTIVE = _env_bool("ECONOMISTER_NONINTERACTIVE", False)
 
+# Optional AI Belgium briefing appended as its own EPUB section.
+BELGIUM_SECTION = _env_bool("BELGIUM_SECTION", True)
+
 # URLs
 # IMPORTANT: This URL always points to the CURRENT weekly edition only.
 # The tool intentionally does not support targeting specific past editions

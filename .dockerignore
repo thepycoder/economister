@@ -5,6 +5,7 @@
 .env.*
 !.env.example
 ebooks
+belgium_runs
 debug
 logs
 temp
@@ -20,5 +21,6 @@ doc
 .idea
 *.md
 !README.md
+!src/belgium/prompts/*.md
 docker-compose.yml
 compose.yml

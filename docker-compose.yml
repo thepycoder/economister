@@ -25,8 +25,11 @@ services:
       ECONOMISTER_NONINTERACTIVE: "true"
       ECONOMIST_EMAIL: "your-email@example.com"
       ECONOMIST_PASSWORD: "your-password"
+      OPENROUTER_API_KEY: ""
+      BELGIUM_SECTION: "true"
     volumes:
       - /media/YOUR_SHARE/economist:/app/ebooks
+      - /media/YOUR_SHARE/economist/belgium_runs:/app/belgium_runs
 
   ofelia:
     image: mcuadros/ofelia:latest
