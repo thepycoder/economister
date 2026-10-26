@@ -21,7 +21,7 @@ if str(_SRC) not in sys.path:
 from belgium.config import (  # noqa: E402
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_MAX_TOPICS,
-    OPENROUTER_BELGIUM_MODEL,
+    BELGIUM_MODEL,
 )
 from belgium.models import Shortlist  # noqa: E402
 from belgium.pipeline import PipelineError, run_pipeline  # noqa: E402
@@ -30,7 +30,7 @@ from belgium.pipeline import PipelineError, run_pipeline  # noqa: E402
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="Belgium section pipeline: VRT ingest + OpenRouter agents",
+        description="Belgium section pipeline: VRT ingest + Claude agents",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -77,7 +77,7 @@ Examples:
     parser.add_argument(
         "--model",
         default=None,
-        help=f"OpenRouter model slug (default {OPENROUTER_BELGIUM_MODEL})",
+        help=f"Anthropic model ID (default {BELGIUM_MODEL})",
     )
     parser.add_argument(
         "--no-bodies",
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print("\n" + "=" * 60)
-    print("Belgium pipeline (VRT + OpenRouter)")
+    print("Belgium pipeline (VRT + Claude)")
     print("=" * 60 + "\n")
 
     try:
@@ -163,10 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         state = RunState.load(run_state_path)
         total = (state.cost or {}).get("total_usd")
         if total is not None:
-            note = ""
-            if state.cost.get("is_byok"):
-                note = " (BYOK upstream estimate)"
-            print(f"  Cost:      ${total:.4f}{note}")
+            print(f"  Cost:      ${total:.4f} (list-price estimate)")
     return 0
 
 

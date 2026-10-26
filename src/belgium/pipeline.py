@@ -12,7 +12,7 @@ from belgium.config import (
     BELGIUM_RUNS_DIR,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_MAX_TOPICS,
-    OPENROUTER_BELGIUM_MODEL,
+    BELGIUM_MODEL,
 )
 from belgium.models import (
     BelgiumArticle,
@@ -107,7 +107,6 @@ def _refresh_run_cost(state: RunState) -> None:
     stages_cost: Dict[str, Any] = {}
     total = 0.0
     has_any = False
-    byok = False
     for name, entry in state.stages.items():
         usage = entry.get("usage") if isinstance(entry, dict) else None
         if not isinstance(usage, dict):
@@ -116,28 +115,19 @@ def _refresh_run_cost(state: RunState) -> None:
         stage_info = {
             "generation_id": usage.get("generation_id") or entry.get("generation_id"),
             "cost_usd": usage.get("cost_usd"),
-            "upstream_inference_cost_usd": usage.get("upstream_inference_cost_usd"),
             "effective_cost_usd": amount,
             "tokens_prompt": usage.get("tokens_prompt"),
             "tokens_completion": usage.get("tokens_completion"),
-            "is_byok": usage.get("is_byok"),
-            "web_search_engine": usage.get("web_search_engine"),
+            "web_search_requests": usage.get("web_search_requests"),
         }
         stages_cost[name] = stage_info
-        if usage.get("is_byok"):
-            byok = True
         if amount is not None:
             total += amount
             has_any = True
     state.cost = {
         "currency": "USD",
         "total_usd": round(total, 6) if has_any else None,
-        "is_byok": byok,
-        "note": (
-            "BYOK: OpenRouter billed $0; total_usd uses upstream_inference_cost"
-            if byok
-            else None
-        ),
+        "note": "Estimated from token usage at Anthropic list prices",
         "stages": stages_cost,
     }
 
@@ -151,7 +141,7 @@ def stage_ingest(
     model: Optional[str] = None,
 ) -> SourceIndex:
     """Fetch VRT sources into ``run_dir/sources/``."""
-    state = load_or_create_state(run_dir, model or OPENROUTER_BELGIUM_MODEL)
+    state = load_or_create_state(run_dir, model or BELGIUM_MODEL)
     mark_stage(state, "ingest", status="running")
     try:
         index = collect_week(days=days, client=client, fetch_bodies=fetch_bodies)
@@ -280,7 +270,7 @@ def stage_curate(
         for s in article.sources
         if s.url
     }
-    state = load_or_create_state(run_dir, model or OPENROUTER_BELGIUM_MODEL)
+    state = load_or_create_state(run_dir, model or BELGIUM_MODEL)
     mark_stage(state, "curate", status="running")
 
     call = curator_fn or agent_api.run_curator
@@ -378,15 +368,14 @@ def _merge_usage(parts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "generation_id": parts[0].get("generation_id"),
         "model": parts[0].get("model"),
         "provider": parts[0].get("provider"),
-        "is_byok": any(bool(p.get("is_byok")) for p in parts),
         "articles": parts,
     }
     for key in (
         "cost_usd",
-        "upstream_inference_cost_usd",
         "effective_cost_usd",
         "tokens_prompt",
         "tokens_completion",
+        "web_search_requests",
     ):
         total = 0.0
         saw = False
@@ -499,7 +488,7 @@ def stage_write(
         skipped = len(shortlist.topics) - len(pending_topics)
         print(f"Skipping {skipped} shortlist topic(s) that already have articles")
 
-    state = load_or_create_state(run_dir, model or OPENROUTER_BELGIUM_MODEL)
+    state = load_or_create_state(run_dir, model or BELGIUM_MODEL)
     mark_stage(state, "write", status="running")
 
     call = writer_fn or agent_api.run_writer

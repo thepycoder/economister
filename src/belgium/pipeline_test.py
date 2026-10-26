@@ -31,7 +31,7 @@ def _long_paragraphs(n: int = 6) -> list:
 
 
 class TestPipelineMocked(unittest.TestCase):
-    """End-to-end pipeline with mocked VRT and OpenRouter."""
+    """End-to-end pipeline with mocked VRT and Claude."""
 
     def _seed_sources(self, run_dir: Path) -> None:
         index = SourceIndex(

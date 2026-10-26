@@ -14,7 +14,7 @@ dependencies = [
   "Pillow>=11.0.0,<12",
   "lxml>=5.3.0,<6",
   "python-dotenv>=1.0.1,<2",
-  "openrouter-agent-sdk>=0.8.0",
+  "anthropic>=2.3.0,<3",
 ]
 
 [tool.uv]

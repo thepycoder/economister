@@ -107,7 +107,7 @@ class TestBelgiumEpub(unittest.TestCase):
                 return fresh
 
             with patch("belgium.epub.latest_run_dir", return_value=stale):
-                with patch("belgium.epub.OPENROUTER_API_KEY", "sk-test"):
+                with patch("belgium.epub.ANTHROPIC_API_KEY", "sk-test"):
                     with patch("belgium.epub.run_pipeline", side_effect=fake_pipeline):
                         articles = collect_belgium_epub_articles(generate=True)
             self.assertTrue(created)

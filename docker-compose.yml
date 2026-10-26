@@ -2,7 +2,7 @@
 #
 # Before deploy:
 #   1. Set ECONOMIST_EMAIL and ECONOMIST_PASSWORD.
-#   2. Set OPENROUTER_API_KEY (Belgium briefing). Leave unset to skip
+#   2. Set ANTHROPIC_API_KEY (Belgium briefing). Leave unset to skip
 #      generation; the Economist EPUB still builds.
 #   3. Change the volume host path to your share
 #      (UGOS Pro: /media/<share-name>/economist).
@@ -27,7 +27,7 @@ services:
       ECONOMISTER_NONINTERACTIVE: "true"
       ECONOMIST_EMAIL: "${ECONOMIST_EMAIL:-your-email@example.com}"
       ECONOMIST_PASSWORD: "${ECONOMIST_PASSWORD:-your-password}"
-      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       BELGIUM_SECTION: "${BELGIUM_SECTION:-true}"
     volumes:
       - /media/YOUR_SHARE/economist:/app/ebooks

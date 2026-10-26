@@ -1,62 +1,39 @@
-"""OpenRouter Agent SDK wrappers for curator and correspondent stages."""
+"""Anthropic Messages API wrappers for curator and correspondent stages."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import anthropic
+
 from belgium.config import (
     AGENT_MAX_OUTPUT_TOKENS,
-    CURATOR_MAX_COST_USD,
-    CURATOR_MAX_STEPS,
-    OPENROUTER_API_KEY,
-    OPENROUTER_BELGIUM_MODEL,
-    OPENROUTER_BELGIUM_REASONING_EFFORT,
-    OPENROUTER_BELGIUM_WRITER_MODEL,
-    WRITER_MAX_COST_USD,
-    WRITER_MAX_STEPS,
+    ANTHROPIC_API_KEY,
+    BELGIUM_EFFORT,
+    BELGIUM_MODEL,
+    BELGIUM_WRITER_MODEL,
+    MAX_PAUSE_CONTINUATIONS,
+    WRITER_MAX_WEB_SEARCHES,
 )
 
-GENERATION_API = "https://openrouter.ai/api/v1/generation"
+# Classifier refusals are retried server-side on Anthropic's recommended model.
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# List prices in USD per million tokens: (input, output, cache write, cache read).
+# Fallback models are listed so a rescued call is still priced.
+MODEL_PRICES_PER_MTOK = {
+    "claude-opus-5-5": (4.00, 20.00, 5.00, 0.20),
+    "claude-opus-5": (5.00, 25.00, 6.25, 0.50),
+    "claude-opus-4-8": (5.00, 25.00, 6.25, 0.50),
+}
+WEB_SEARCH_USD = 0.01  # $10 per 1,000 searches
 
 
 class AgentError(RuntimeError):
-    """Raised when an OpenRouter agent call fails."""
-
-
-def _ensure_openrouter_compat() -> None:
-    """Shim missing symbols so openrouter-agent-sdk 0.8 can import.
-
-    openrouter 1.2.x removed ``OutputImage`` which the agent package still
-    imports. Alias it to ``InputImage`` before loading ``openrouter_agent``.
-    """
-    import openrouter.components as components
-
-    if not hasattr(components, "OutputImage"):
-        from openrouter.components import InputImage
-
-        components.OutputImage = InputImage
-
-
-def _import_agent():
-    """Import openrouter_agent after applying the compatibility shim."""
-    _ensure_openrouter_compat()
-    from openrouter_agent import (  # noqa: WPS433
-        OpenRouter,
-        call_model,
-        max_cost,
-        server_tool,
-        step_count_is,
-    )
-
-    return OpenRouter, call_model, max_cost, server_tool, step_count_is
+    """Raised when an Anthropic model call fails."""
 
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
@@ -92,10 +69,10 @@ def extract_json_object(text: str) -> Dict[str, Any]:
 
 
 def _require_api_key(api_key: Optional[str] = None) -> str:
-    key = (api_key if api_key is not None else OPENROUTER_API_KEY).strip()
+    key = (api_key if api_key is not None else ANTHROPIC_API_KEY).strip()
     if not key:
         raise AgentError(
-            "OPENROUTER_API_KEY is not set. Add it to .env or the environment."
+            "ANTHROPIC_API_KEY is not set. Add it to .env or the environment."
         )
     return key
 
@@ -108,88 +85,6 @@ def _field(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
-def effective_cost_usd(usage: Dict[str, Any]) -> Optional[float]:
-    """Prefer billed OpenRouter cost; fall back to BYOK upstream estimate.
-
-    With Bring-Your-Own-Key, OpenRouter often reports ``total_cost``/``usage``
-    as ``0`` while still populating ``upstream_inference_cost``.
-    """
-    billed = _maybe_float(usage.get("cost_usd"))
-    upstream = _maybe_float(usage.get("upstream_inference_cost_usd"))
-    is_byok = bool(usage.get("is_byok"))
-
-    if is_byok or (billed == 0.0 and upstream is not None):
-        return upstream if upstream is not None else billed
-    if billed is not None:
-        return billed
-    return upstream
-
-
-def fetch_generation_usage(
-    generation_id: str,
-    *,
-    api_key: Optional[str] = None,
-    retries: int = 4,
-    delay_seconds: float = 1.5,
-) -> Dict[str, Any]:
-    """Look up cost/token stats for a finished OpenRouter generation."""
-    key = _require_api_key(api_key)
-    url = f"{GENERATION_API}?id={urllib.parse.quote(generation_id)}"
-    last_error: Optional[Exception] = None
-
-    for attempt in range(retries):
-        req = urllib.request.Request(
-            url,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Accept": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            data = payload.get("data") if isinstance(payload, dict) else None
-            if not isinstance(data, dict):
-                data = payload if isinstance(payload, dict) else {}
-            return normalize_generation_usage(data, generation_id=generation_id)
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-            last_error = exc
-            if attempt + 1 < retries:
-                time.sleep(delay_seconds * (attempt + 1))
-    raise AgentError(
-        f"Failed to fetch generation stats for {generation_id}: {last_error}"
-    )
-
-
-def normalize_generation_usage(
-    data: Dict[str, Any],
-    *,
-    generation_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Normalize OpenRouter generation metadata into a stable usage dict."""
-    total_cost = data.get("total_cost")
-    if total_cost is None:
-        total_cost = data.get("usage")
-    upstream = data.get("upstream_inference_cost")
-    usage = {
-        "generation_id": data.get("id") or generation_id,
-        "model": data.get("model"),
-        "provider": data.get("provider_name"),
-        "is_byok": bool(data.get("is_byok")),
-        "cost_usd": _maybe_float(total_cost),
-        "upstream_inference_cost_usd": _maybe_float(upstream),
-        "tokens_prompt": data.get("native_tokens_prompt") or data.get("tokens_prompt"),
-        "tokens_completion": (
-            data.get("native_tokens_completion") or data.get("tokens_completion")
-        ),
-        "web_search_engine": data.get("web_search_engine"),
-        "latency_ms": data.get("latency"),
-        "generation_time_ms": data.get("generation_time"),
-    }
-    usage["effective_cost_usd"] = effective_cost_usd(usage)
-    return usage
-
-
 def _maybe_float(value: Any) -> Optional[float]:
     if value is None or value == "":
         return None
@@ -199,79 +94,117 @@ def _maybe_float(value: Any) -> Optional[float]:
         return None
 
 
-def _usage_from_response(response: Any) -> Dict[str, Any]:
-    """Best-effort usage extraction from the live Responses payload."""
-    usage_block = _field(response, "usage") or {}
-    generation_id = _field(response, "id") or _field(_field(response, "meta"), "id")
-    cost = _field(usage_block, "cost")
+def effective_cost_usd(usage: Dict[str, Any]) -> Optional[float]:
+    """Stage cost in USD: the recorded effective cost, else the raw cost.
+
+    Runs from the OpenRouter era stored a BYOK-adjusted ``effective_cost_usd``;
+    reading it first keeps their roll-ups unchanged.
+    """
+    for key in ("effective_cost_usd", "cost_usd"):
+        value = _maybe_float(usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def estimate_cost_usd(model: Optional[str], usage: Any) -> Optional[float]:
+    """Price one response's usage at list rates; ``None`` for unpriced models."""
+    prices = MODEL_PRICES_PER_MTOK.get(model or "")
+    if prices is None:
+        return None
+    input_price, output_price, write_price, read_price = prices
+    token_cost = (
+        (_field(usage, "input_tokens") or 0) * input_price
+        + (_field(usage, "output_tokens") or 0) * output_price
+        + (_field(usage, "cache_creation_input_tokens") or 0) * write_price
+        + (_field(usage, "cache_read_input_tokens") or 0) * read_price
+    ) / 1_000_000
+    searches = _field(_field(usage, "server_tool_use"), "web_search_requests") or 0
+    return token_cost + searches * WEB_SEARCH_USD
+
+
+def usage_from_responses(responses: List[Any]) -> Dict[str, Any]:
+    """Sum usage across one call's responses (paused turns resume in new ones)."""
+    last = responses[-1]
+    tokens_prompt = 0
+    tokens_completion = 0
+    searches = 0
+    cost: Optional[float] = 0.0
+    for response in responses:
+        usage = response.usage
+        tokens_prompt += (
+            (_field(usage, "input_tokens") or 0)
+            + (_field(usage, "cache_creation_input_tokens") or 0)
+            + (_field(usage, "cache_read_input_tokens") or 0)
+        )
+        tokens_completion += _field(usage, "output_tokens") or 0
+        searches += (
+            _field(_field(usage, "server_tool_use"), "web_search_requests") or 0
+        )
+        part = estimate_cost_usd(response.model, usage)
+        cost = None if cost is None or part is None else cost + part
     return {
-        "generation_id": generation_id,
-        "model": _field(response, "model"),
-        "cost_usd": _maybe_float(cost),
-        "tokens_prompt": _field(usage_block, "input_tokens") or _field(usage_block, "prompt_tokens"),
-        "tokens_completion": (
-            _field(usage_block, "output_tokens") or _field(usage_block, "completion_tokens")
-        ),
-        "effective_cost_usd": _maybe_float(cost),
+        "generation_id": last.id,
+        "model": last.model,
+        "provider": "anthropic",
+        "cost_usd": cost,
+        "effective_cost_usd": cost,
+        "tokens_prompt": tokens_prompt,
+        "tokens_completion": tokens_completion,
+        "web_search_requests": searches,
     }
 
 
-async def _call_model_text(
+def _call_model_text(
     *,
     model: str,
     prompt: str,
-    tools: Optional[List[Any]] = None,
-    max_steps: int = 8,
-    max_cost_usd: float = 1.0,
+    tools: Optional[List[Dict[str, Any]]] = None,
     api_key: Optional[str] = None,
-    reasoning_effort: Optional[str] = None,
+    effort: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """Run one ``call_model`` loop and return (text, usage_meta)."""
-    OpenRouter, call_model, max_cost, _server_tool, step_count_is = _import_agent()
-    key = _require_api_key(api_key)
-    client = OpenRouter(api_key=key)
-
-    effort = (reasoning_effort or OPENROUTER_BELGIUM_REASONING_EFFORT).strip()
+    """Run one model call to completion and return (text, usage_meta)."""
+    client = anthropic.Anthropic(api_key=_require_api_key(api_key), max_retries=4)
+    max_tokens = max_output_tokens or AGENT_MAX_OUTPUT_TOKENS
     request: Dict[str, Any] = {
         "model": model,
-        "input": prompt,
-        "stop_when": [step_count_is(max_steps), max_cost(max_cost_usd)],
-        "max_output_tokens": max_output_tokens or AGENT_MAX_OUTPUT_TOKENS,
+        "max_tokens": max_tokens,
+        "output_config": {"effort": effort or BELGIUM_EFFORT},
+        "betas": [FALLBACK_BETA],
+        "fallbacks": "default",
     }
-    if effort and effort.lower() not in {"none", "off", "disabled"}:
-        # Gemini 3: OpenRouter maps effort → Google thinkingLevel (max is "high").
-        request["reasoning"] = {"effort": effort}
     if tools:
         request["tools"] = tools
 
-    result = call_model(client, request)
-    text = await result.get_text()
-    usage: Dict[str, Any] = {}
-    try:
-        response = await result.get_response()
-        usage = _usage_from_response(response)
-    except Exception:
-        usage = {}
+    messages: List[Dict[str, Any]] = [{"role": "user", "content": prompt}]
+    responses: List[Any] = []
+    for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
+        # Stream so long research turns are not cut off by HTTP timeouts.
+        with client.beta.messages.stream(messages=messages, **request) as stream:
+            response = stream.get_final_message()
+        responses.append(response)
+        if response.stop_reason != "pause_turn":
+            break
+        # The server resumes its web-search loop from the trailing tool use.
+        messages.append({"role": "assistant", "content": response.content})
 
-    generation_id = usage.get("generation_id")
-    if generation_id:
-        try:
-            # Generation stats (esp. BYOK upstream cost) often lag the stream.
-            await asyncio.sleep(1.0)
-            fetched = await asyncio.to_thread(
-                fetch_generation_usage,
-                str(generation_id),
-                api_key=key,
-            )
-            usage = {**usage, **{k: v for k, v in fetched.items() if v is not None}}
-            usage["effective_cost_usd"] = effective_cost_usd(usage)
-        except AgentError:
-            pass
+    usage = usage_from_responses(responses)
+    stop_reason = response.stop_reason
+    if stop_reason == "refusal":
+        category = _field(response.stop_details, "category")
+        raise AgentError(f"{response.model} declined the request ({category})")
+    if stop_reason == "pause_turn":
+        raise AgentError(
+            f"Web search still running after {MAX_PAUSE_CONTINUATIONS} continuations"
+        )
+    if stop_reason == "max_tokens":
+        raise AgentError(f"Response hit max_tokens ({max_tokens}) before finishing")
 
-    if not text or not str(text).strip():
-        raise AgentError("OpenRouter returned an empty response")
-    return str(text), usage
+    text = "".join(block.text for block in response.content if block.type == "text")
+    if not text.strip():
+        raise AgentError("Anthropic returned an empty response")
+    return text, usage
 
 
 def run_curator(
@@ -301,15 +234,10 @@ def run_curator(
         prompt += article_excerpts
         prompt += "\n"
 
-    text, usage = asyncio.run(
-        _call_model_text(
-            model=model or OPENROUTER_BELGIUM_MODEL,
-            prompt=prompt,
-            tools=None,
-            max_steps=CURATOR_MAX_STEPS,
-            max_cost_usd=CURATOR_MAX_COST_USD,
-            api_key=api_key,
-        )
+    text, usage = _call_model_text(
+        model=model or BELGIUM_MODEL,
+        prompt=prompt,
+        api_key=api_key,
     )
     return extract_json_object(text), usage
 
@@ -327,8 +255,6 @@ def run_writer(
     Returns ``(parsed_json, usage_meta)``. The JSON may be a single article
     object or ``{"articles": [...]}``.
     """
-    _OpenRouter, _call_model, _max_cost, server_tool, _step_count_is = _import_agent()
-
     prompt = load_prompt("writer.md")
     prompt += "\n\n## Shortlist\n\n```json\n"
     prompt += shortlist_json
@@ -338,31 +264,22 @@ def run_writer(
 
     tools = None
     if enable_web_search:
-        tools = [
-            server_tool({
-                "type": "openrouter:web_search",
-                "parameters": {
-                    "engine": "auto",
-                    "max_results": 5,
-                    "max_uses": 8,
-                    "user_location": {
-                        "type": "approximate",
-                        "country": "BE",
-                        "timezone": "Europe/Brussels",
-                    },
-                },
-            })
-        ]
+        tools = [{
+            "type": "web_search_20260209",
+            "name": "web_search",
+            "max_uses": WRITER_MAX_WEB_SEARCHES,
+            "user_location": {
+                "type": "approximate",
+                "country": "BE",
+                "timezone": "Europe/Brussels",
+            },
+        }]
 
-    text, usage = asyncio.run(
-        _call_model_text(
-            model=model or OPENROUTER_BELGIUM_WRITER_MODEL,
-            prompt=prompt,
-            tools=tools,
-            max_steps=WRITER_MAX_STEPS,
-            max_cost_usd=WRITER_MAX_COST_USD,
-            api_key=api_key,
-        )
+    text, usage = _call_model_text(
+        model=model or BELGIUM_WRITER_MODEL,
+        prompt=prompt,
+        tools=tools,
+        api_key=api_key,
     )
     return extract_json_object(text), usage
 

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from belgium.config import BELGIUM_RUNS_DIR, OPENROUTER_API_KEY
+from belgium.config import ANTHROPIC_API_KEY, BELGIUM_RUNS_DIR
 from belgium.models import BelgiumArticle, Shortlist
 from belgium.pipeline import load_existing_articles, run_pipeline, stage_write
 
@@ -129,8 +129,8 @@ def collect_belgium_epub_articles(
             return []
         return [to_epub_article(article) for article in load_existing_articles(chosen)]
 
-    if not OPENROUTER_API_KEY:
-        print("Belgium section: OPENROUTER_API_KEY is unset; skipping generation")
+    if not ANTHROPIC_API_KEY:
+        print("Belgium section: ANTHROPIC_API_KEY is unset; skipping generation")
         if chosen is None:
             return []
         return [to_epub_article(article) for article in load_existing_articles(chosen)]

@@ -1,4 +1,4 @@
-"""Tests for OpenRouter agent helpers (no network)."""
+"""Tests for Claude agent helpers (no network)."""
 
 from __future__ import annotations
 
@@ -67,28 +67,56 @@ class TestLoadPrompt(unittest.TestCase):
 class TestUsageHelpers(unittest.TestCase):
     """Cost/usage normalization."""
 
-    def test_byok_uses_upstream(self) -> None:
-        from belgium.agents import effective_cost_usd, normalize_generation_usage
+    def test_opus_list_price(self) -> None:
+        from belgium.agents import estimate_cost_usd
 
-        usage = normalize_generation_usage({
-            "id": "gen-1",
-            "total_cost": 0,
-            "usage": 0,
-            "upstream_inference_cost": 0.12,
-            "is_byok": True,
-            "native_tokens_prompt": 100,
-            "native_tokens_completion": 50,
-        })
-        self.assertEqual(usage["effective_cost_usd"], 0.12)
-        self.assertEqual(effective_cost_usd(usage), 0.12)
+        usage = {
+            "input_tokens": 1_000_000,
+            "output_tokens": 100_000,
+            "cache_read_input_tokens": 1_000_000,
+            "server_tool_use": {"web_search_requests": 3},
+        }
+        # $4 input + $2 output + $0.20 cache read + 3 searches at $0.01.
+        self.assertAlmostEqual(estimate_cost_usd("claude-opus-5-5", usage), 6.23)
 
-    def test_billed_cost_preferred(self) -> None:
+    def test_unknown_model_unpriced(self) -> None:
+        from belgium.agents import estimate_cost_usd
+
+        self.assertIsNone(estimate_cost_usd("claude-unknown", {"input_tokens": 1}))
+
+    def test_paused_turns_summed(self) -> None:
+        from types import SimpleNamespace
+
+        from belgium.agents import usage_from_responses
+
+        def response(msg_id: str, searches: int) -> SimpleNamespace:
+            return SimpleNamespace(
+                id=msg_id,
+                model="claude-opus-5-5",
+                usage=SimpleNamespace(
+                    input_tokens=1000,
+                    output_tokens=500,
+                    cache_creation_input_tokens=None,
+                    cache_read_input_tokens=0,
+                    server_tool_use=SimpleNamespace(web_search_requests=searches),
+                ),
+            )
+
+        usage = usage_from_responses([response("msg_1", 5), response("msg_2", 2)])
+        self.assertEqual(usage["generation_id"], "msg_2")
+        self.assertEqual(usage["tokens_prompt"], 2000)
+        self.assertEqual(usage["tokens_completion"], 1000)
+        self.assertEqual(usage["web_search_requests"], 7)
+        self.assertAlmostEqual(usage["effective_cost_usd"], 0.008 + 0.02 + 0.07)
+
+    def test_legacy_effective_cost_preferred(self) -> None:
         from belgium.agents import effective_cost_usd
 
         self.assertEqual(
-            effective_cost_usd({"cost_usd": 0.05, "upstream_inference_cost_usd": 0.09}),
-            0.05,
+            effective_cost_usd({"cost_usd": 0.0, "effective_cost_usd": 0.12}),
+            0.12,
         )
+        self.assertEqual(effective_cost_usd({"cost_usd": 0.05}), 0.05)
 
     def test_unpack_legacy(self) -> None:
         from belgium.agents import unpack_agent_result

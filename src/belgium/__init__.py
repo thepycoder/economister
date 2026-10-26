@@ -1,4 +1,4 @@
-"""Belgium news pipeline: VRT ingest + OpenRouter agents."""
+"""Belgium news pipeline: VRT ingest + Claude agents."""
 
 __all__ = ["__version__"]
 

@@ -8,30 +8,23 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_BELGIUM_MODEL = os.getenv(
-    "OPENROUTER_BELGIUM_MODEL",
-    "openai/gpt-5.6-sol",
-).strip()
-OPENROUTER_BELGIUM_WRITER_MODEL = os.getenv(
-    "OPENROUTER_BELGIUM_WRITER_MODEL",
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+BELGIUM_MODEL = os.getenv("BELGIUM_MODEL", "").strip() or "claude-opus-5-5"
+BELGIUM_WRITER_MODEL = os.getenv(
+    "BELGIUM_WRITER_MODEL",
     "",
-).strip() or OPENROUTER_BELGIUM_MODEL
-# Gemini 3 maps effort → thinkingLevel; "high" is the ceiling (xhigh → high).
-OPENROUTER_BELGIUM_REASONING_EFFORT = os.getenv(
-    "OPENROUTER_BELGIUM_REASONING_EFFORT",
-    "high",
-).strip() or "high"
+).strip() or BELGIUM_MODEL
+# Opus 5.5 defaults to "medium"; curating and writing the briefing want more.
+BELGIUM_EFFORT = os.getenv("BELGIUM_EFFORT", "").strip() or "high"
 
 BELGIUM_RUNS_DIR = PROJECT_ROOT / "belgium_runs"
 
-# Agent loop caps
-CURATOR_MAX_STEPS = 4
-WRITER_MAX_STEPS = 12
-CURATOR_MAX_COST_USD = 0.50
-WRITER_MAX_COST_USD = 8.00
-# Reasoning tokens count against this budget; keep headroom for the article.
-AGENT_MAX_OUTPUT_TOKENS = 16_000
+# Agent call caps
+WRITER_MAX_WEB_SEARCHES = 8
+# The server pauses long web-search loops (stop_reason "pause_turn").
+MAX_PAUSE_CONTINUATIONS = 3
+# Thinking tokens count against this budget; keep headroom for the article.
+AGENT_MAX_OUTPUT_TOKENS = 64_000
 
 # VRT ingest defaults
 DEFAULT_LOOKBACK_DAYS = 7
