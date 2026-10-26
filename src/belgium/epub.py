@@ -12,7 +12,9 @@ from belgium.config import BELGIUM_RUNS_DIR, OPENROUTER_API_KEY
 from belgium.models import BelgiumArticle, Shortlist
 from belgium.pipeline import load_existing_articles, run_pipeline, stage_write
 
-FRESH_RUN_DAYS = 7
+# Thursday: digital edition lands and the NAS job runs. A Saturday retry
+# should reuse that briefing; next Thursday must not.
+EDITION_WEEKDAY = 3
 
 
 def list_run_dirs(base: Optional[Path] = None) -> List[Path]:
@@ -33,8 +35,19 @@ def latest_run_dir(base: Optional[Path] = None) -> Optional[Path]:
     return runs[0] if runs else None
 
 
-def run_is_fresh(run_dir: Path, *, days: int = FRESH_RUN_DAYS) -> bool:
-    """True when the run was created within the current briefing window."""
+def briefing_window_start(now: Optional[datetime] = None) -> datetime:
+    """Start of this edition week: Thursday 00:00 UTC."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    days_since_thursday = (current.weekday() - EDITION_WEEKDAY) % 7
+    start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start - timedelta(days=days_since_thursday)
+
+
+def run_is_fresh(run_dir: Path, *, now: Optional[datetime] = None) -> bool:
+    """True when the run was created in the current Thursday edition week."""
     created = None
     state_path = run_dir / "run.json"
     if state_path.exists():
@@ -52,7 +65,7 @@ def run_is_fresh(run_dir: Path, *, days: int = FRESH_RUN_DAYS) -> bool:
         return False
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - stamp <= timedelta(days=days)
+    return stamp >= briefing_window_start(now)
 
 
 def to_epub_article(piece: BelgiumArticle) -> Any:
@@ -101,9 +114,14 @@ def collect_belgium_epub_articles(
     """Load this week's Belgium pieces, generating them only if needed."""
     chosen = Path(run_dir) if run_dir is not None else latest_run_dir()
     if chosen is not None and run_dir is None and not run_is_fresh(chosen):
+        print(
+            f"Belgium section: {chosen.name} is from a previous edition week; "
+            "generating a new briefing"
+        )
         chosen = None
 
     if chosen is not None and shortlist_is_written(chosen):
+        print(f"Belgium section: reusing {chosen.name}")
         return [to_epub_article(article) for article in load_existing_articles(chosen)]
 
     if not generate:

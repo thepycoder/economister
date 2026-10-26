@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from belgium.epub import (
+    briefing_window_start,
     collect_belgium_epub_articles,
     run_is_fresh,
     shortlist_is_written,
@@ -110,6 +112,33 @@ class TestBelgiumEpub(unittest.TestCase):
                         articles = collect_belgium_epub_articles(generate=True)
             self.assertTrue(created)
             self.assertEqual(articles[0].title, "Belgium's grid <test>")
+
+    def test_saturday_run_is_stale_next_thursday(self) -> None:
+        """Last week's Saturday retry must not be reused on this Thursday."""
+        with tempfile.TemporaryDirectory() as tmp:
+            prior = Path(tmp) / "2026-09-20"
+            prior.mkdir()
+            (prior / "run.json").write_text(
+                json.dumps({"created_at": "2026-09-20T07:23:00Z"}),
+                encoding="utf-8",
+            )
+            thursday_job = datetime(2026, 9, 24, 20, 0, tzinfo=timezone.utc)
+            self.assertEqual(
+                briefing_window_start(thursday_job),
+                datetime(2026, 9, 24, tzinfo=timezone.utc),
+            )
+            self.assertFalse(run_is_fresh(prior, now=thursday_job))
+
+    def test_thursday_run_is_fresh_on_saturday_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            current = Path(tmp) / "2026-09-24"
+            current.mkdir()
+            (current / "run.json").write_text(
+                json.dumps({"created_at": "2026-09-24T20:22:00Z"}),
+                encoding="utf-8",
+            )
+            saturday = datetime(2026, 9, 26, 9, 0, tzinfo=timezone.utc)
+            self.assertTrue(run_is_fresh(current, now=saturday))
 
     def test_attach_disabled(self) -> None:
         existing = []
